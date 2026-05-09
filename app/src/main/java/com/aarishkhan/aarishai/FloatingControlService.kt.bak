@@ -222,7 +222,34 @@ class FloatingControlService : Service() {
         }
     }
 
-    
+    private fun handleStartButton() {
+        when {
+            isRecording -> {
+                stopRecording()
+            }
+            AutoActionService.isPlaying() -> {
+                AutoActionService.stopPlayback(this)
+                btnStart.text = "PLAY"
+                restorePanelUI()
+
+                playbackWatcherRunnable?.let { handler.removeCallbacks(it) }
+                playbackWatcherRunnable = null
+
+                Toast.makeText(this, "Playback stop ho gaya", Toast.LENGTH_SHORT).show()
+            }
+            GestureStore.hasRecording(this) -> {
+                val started = AutoActionService.playNow(this)
+                if (started) {
+                    btnStart.text = "STOP"
+                    hidePanelUIForPlayback()
+                    checkPlaybackStateContinuously()
+                }
+            }
+            else -> {
+                startRecording()
+            }
+        }
+    }
 
        private fun checkPlaybackStateContinuously() {
         playbackWatcherRunnable?.let { handler.removeCallbacks(it) }
@@ -283,7 +310,46 @@ class FloatingControlService : Service() {
         }
     }
 
-    
+    private fun startRecording() {
+        if (isRecording) return
+        isRecording = true
+        unsavedGestures = emptyList()
+                btnStart.text = "STOP"
+        btnLoop.visibility = View.GONE
+        btnSave.visibility = View.GONE
+        btnCut.visibility = View.GONE
+
+        val touchLayer = TouchCaptureView(this)
+        val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+
+        val captureParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            overlayType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        )
+                captureParams.gravity = Gravity.TOP or Gravity.START
+
+                if (!safeAddView(touchLayer, captureParams, "Recording layer open nahi hua")) {
+            isRecording = false
+            btnStart.text = if (GestureStore.hasRecording(this)) "PLAY" else "START"
+            btnStart.setOnClickListener { handleStartButton() }
+            btnLoop.visibility = if (GestureStore.hasRecording(this)) View.VISIBLE else View.GONE
+            btnCut.visibility = View.VISIBLE
+            label.visibility = View.VISIBLE
+            btnSave.visibility = View.GONE
+            return
+        }
+        captureView = touchLayer
+        bringPanelToFront()
+
+        Toast.makeText(this, "Recording start ho gayi", Toast.LENGTH_SHORT).show()
+    }
 
             private fun bringPanelToFront() {
         val panel = panelView ?: return
@@ -292,10 +358,48 @@ class FloatingControlService : Service() {
         safeAddView(panel, params, "Panel restore error")
     }
 
-     
+     private fun stopRecording() {
+    if (!isRecording) return
+    isRecording = false
+    val layer = captureView
+    if (layer != null) {
+        unsavedGestures = layer.getRecordedGestures()
+        safeRemoveView(layer)
+    }
+    captureView = null
+                if (unsavedGestures.isNotEmpty()) {
+            btnStart.text = "SAVE*"
+            btnStart.setOnClickListener { saveRecording() }
+            btnSave.visibility = View.VISIBLE
+            Toast.makeText(this, "Recording stop. Ab SAVE dabao.", Toast.LENGTH_SHORT).show()
+                } else {
+            val hasOld = GestureStore.hasRecording(this)
+            btnStart.text = if (hasOld) "PLAY" else "START"
+            btnStart.setOnClickListener { handleStartButton() }
+            btnSave.visibility = View.GONE
+            btnLoop.visibility = if (hasOld) View.VISIBLE else View.GONE
+            Toast.makeText(this, "Recording stop.", Toast.LENGTH_SHORT).show()
+        }
+        btnCut.visibility = View.VISIBLE
+}
 
     // BUG #4 FIX: Loop text update + visibility correctly set on save
-     
+     private fun saveRecording() {
+    if (isRecording) stopRecording()
+    if (unsavedGestures.isEmpty()) {
+        Toast.makeText(this, "Koi recording nahi mili", Toast.LENGTH_SHORT).show()
+        return
+    }
+        GestureStore.save(this, unsavedGestures)
+    unsavedGestures = emptyList() // <-- ये लाइन जोड़ी गई है (Memory clear करने के लिए)
+    btnStart.text = "PLAY"
+    btnStart.setOnClickListener { handleStartButton() }
+
+        updateLoopButtonText(btnLoop)
+    btnLoop.visibility = View.VISIBLE
+    btnSave.visibility = View.GONE
+    Toast.makeText(this, "Screen Command save ho gaya", Toast.LENGTH_SHORT).show()
+}
         private fun stopEverythingAndClose() {
                                 if (unsavedGestures.isNotEmpty() && !pendingDiscardConfirm) {
             pendingDiscardConfirm = true
@@ -387,230 +491,79 @@ class FloatingControlService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-
-
-    private var glassHiddenAt = 0L
-
-    // ✅ SAFE UI STATE FIX: Default parameter added to prevent compile errors
-    private fun updateUIState(startText: String, showSave: Boolean, showOthers: Boolean, showCut: Boolean = true) {
-        btnStart.text = startText
-        val sVis = if (showSave) android.view.View.VISIBLE else android.view.View.GONE
-        val oVis = if (showOthers) android.view.View.VISIBLE else android.view.View.GONE
-        val cVis = if (showCut) android.view.View.VISIBLE else android.view.View.GONE
-        
-        try { btnSave?.visibility = sVis } catch(e:Exception){}
-        try { btnClear?.visibility = oVis } catch(e:Exception){}
-        try { btnSettings?.visibility = oVis } catch(e:Exception){}
-        try { btnLoop?.visibility = oVis } catch(e:Exception){}
-        try { btnSpeed?.visibility = oVis } catch(e:Exception){}
-        try { btnCut?.visibility = cVis } catch(e:Exception){}
-    }
-
-    // ✅ EXACT NAVIGATION GAP FIX
-    private fun extractAndAppendGestures() {
-        val view = captureView as? TouchCaptureView ?: return
-        val newGestures = view.getRecordedGestures()
-        
-        if (newGestures.isEmpty()) return
-        
-        val mutable = unsavedGestures.toMutableList()
-        val lastGesture = unsavedGestures.lastOrNull()
-        val lastGestureEnd = (lastGesture?.delayFromStart ?: 0L) + (lastGesture?.points?.lastOrNull()?.t ?: 0L)
-        
-        // Asli Navigation Gap: Naye Glass ke start time mein se Purane HIDE time ko minus karo
-        val navigationGap = if (unsavedGestures.isNotEmpty() && glassHiddenAt > 0L) {
-            val gap = view.getRecordingStartTime() - glassHiddenAt
-            if (gap > 0L) gap else 0L
-        } else {
-            0L
-        }
-        
-        val timeOffset = if (unsavedGestures.isEmpty()) {
-            0L
-        } else {
-            lastGestureEnd + navigationGap
-        }
-        
-        newGestures.forEach { g -> 
-            mutable.add(RecordedGesture(delayFromStart = g.delayFromStart + timeOffset, points = g.points))
-        }
-        
-        unsavedGestures = mutable
-    }
-
-    private fun handleStartButton() {
-        if (AutoActionService.isPlaying()) {
-            AutoActionService.stopPlayback(this)
-            updateUIState("PLAY", false, true, true)
-            restorePanelUI()
-            android.widget.Toast.makeText(this, "Playback stopped", android.widget.Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        if (isRecording) {
-            // ✅ ORDER FIXED: Pehle extract karo, fir glass hatao, aur fir HIDE time save karo
-            extractAndAppendGestures()
-            isRecording = false
-            safeRemoveView(captureView)
-            captureView = null
-            
-            glassHiddenAt = android.os.SystemClock.uptimeMillis() // ACTUAL WAIT YAHAN SE START HOGA
-            
-            updateUIState("+ ADD", true, false, true)
-            android.widget.Toast.makeText(this, "Glass hat gaya! Naya page kholo aur + ADD dabao.", android.widget.Toast.LENGTH_LONG).show()
-            
-        } else if (unsavedGestures.isNotEmpty()) {
-            startRecording()
-        } else if (GestureStore.hasRecording(this)) {
-            try { closeSettingsPanel() } catch(e: Exception) {}
-            val started = AutoActionService.playNow(this)
-            if (started) {
-                updateUIState("STOP", false, false, false) // CUT button hide
-                hidePanelUIForPlayback()
-                checkPlaybackStateContinuously()
-            }
-        } else {
-            unsavedGestures = emptyList()
-            startRecording()
-        }
-    }
-
-    private fun startRecording() {
-        try { closeSettingsPanel() } catch (e: Exception) {}
-        isRecording = true
-        updateUIState("HIDE", true, false, true)
-
-        val touchLayer = TouchCaptureView(this)
-        val overlayType = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            android.view.WindowManager.LayoutParams.TYPE_PHONE
-        }
-        val params = android.view.WindowManager.LayoutParams(
-            android.view.WindowManager.LayoutParams.MATCH_PARENT,
-            android.view.WindowManager.LayoutParams.MATCH_PARENT,
-            overlayType,
-            android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or android.view.WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            android.graphics.PixelFormat.TRANSLUCENT
-        )
-        params.gravity = android.view.Gravity.TOP or android.view.Gravity.START
-
-        if (!safeAddView(touchLayer, params, "Recording layer error")) {
-            isRecording = false
-            val hasOld = GestureStore.hasRecording(this)
-            updateUIState(if (unsavedGestures.isNotEmpty()) "+ ADD" else if (hasOld) "PLAY" else "START", unsavedGestures.isNotEmpty(), hasOld, true)
-            return
-        }
-
-        captureView = touchLayer
-        bringPanelToFront()
-        android.widget.Toast.makeText(this, "🟢 Glass ON! Wait aur Tap record honge.", android.widget.Toast.LENGTH_SHORT).show()
-    }
-
-    private fun saveRecording() {
-        if (isRecording) {
-            extractAndAppendGestures()
-            isRecording = false
-            safeRemoveView(captureView)
-            captureView = null
-        }
-        
-        glassHiddenAt = 0L // ✅ RESET FIX
-        
-        if (unsavedGestures.isEmpty()) {
-            android.widget.Toast.makeText(this, "Koi recording nahi mili", android.widget.Toast.LENGTH_SHORT).show()
-            return
-        }
-        GestureStore.save(this, unsavedGestures)
-        unsavedGestures = emptyList()
-        updateUIState("PLAY", false, true, true)
-        android.widget.Toast.makeText(this, "✅ Poori Memory Save ho gayi!", android.widget.Toast.LENGTH_SHORT).show()
-    }
-
-    private fun stopRecording() {
-        isRecording = false
-        safeRemoveView(captureView)
-        captureView = null
-        glassHiddenAt = 0L // ✅ RESET FIX
-        
-        if (unsavedGestures.isNotEmpty()) {
-            android.widget.Toast.makeText(this, "⚠️ Unsaved multi-page steps cancel ho gaye", android.widget.Toast.LENGTH_SHORT).show()
-        }
-        unsavedGestures = emptyList()
-        val hasOld = GestureStore.hasRecording(this)
-        updateUIState(if (hasOld) "PLAY" else "START", false, hasOld, true)
-    }
-
-    private fun clearSavedRecordingFromPanel() {
-        if (isRecording || AutoActionService.isPlaying()) {
-            android.widget.Toast.makeText(this, "Abhi saaf nahi kar sakte", android.widget.Toast.LENGTH_SHORT).show()
-            return
-        }
-        GestureStore.clear(this)
-        unsavedGestures = emptyList()
-        glassHiddenAt = 0L // ✅ RESET FIX
-        
-        updateUIState("START", false, false, true)
-        android.widget.Toast.makeText(this, "🗑️ Purani memory clear ho gayi!", android.widget.Toast.LENGTH_SHORT).show()
-    }
-
 }
 
 // BUG #1 FIX: ACTION_DOWN aur ACTION_UP hamesha save honge — long press skip nahi hoga
-
-
-
-class TouchCaptureView(context: android.content.Context) : android.view.View(context) {
+class TouchCaptureView(context: Context) : View(context) {
     private val recordedGestures = mutableListOf<RecordedGesture>()
     private val currentPoints = mutableListOf<GesturePoint>()
-    
-    private val recordingStartTime = android.os.SystemClock.uptimeMillis()
+    private var recordingStartTime = 0L
     private var currentGestureDownTime = 0L
 
     init {
         isClickable = true
-        setBackgroundColor(android.graphics.Color.argb(45, 0, 200, 0)) // 🟢 Green Glass
-    }
-    
-    // ✅ NEW FIX: For exact Gap calculation
-    fun getRecordingStartTime(): Long {
-        return recordingStartTime
+        setBackgroundColor(Color.argb(5, 0, 120, 255))
     }
 
-    override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (recordingStartTime == 0L) recordingStartTime = event.eventTime
+        
         when (event.actionMasked) {
-            android.view.MotionEvent.ACTION_DOWN -> {
+            MotionEvent.ACTION_DOWN -> {
                 currentPoints.clear()
                 currentGestureDownTime = event.eventTime
-                addPoint(event, forceAdd = true)
+                addPoint(event, forceAdd = true) // DOWN hamesha add hoga
+                return true
             }
-            android.view.MotionEvent.ACTION_MOVE -> {
-                addPoint(event, forceAdd = false)
+            MotionEvent.ACTION_MOVE -> {
+                addPoint(event, forceAdd = false) // MOVE filter ho sakta hai
+                return true
             }
-            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
-                addPoint(event, forceAdd = true)
+            MotionEvent.ACTION_UP -> {
+                addPoint(event, forceAdd = true) // UP hamesha add hoga — long press fix
                 saveCurrentGesture()
+                currentPoints.clear()
+                return true
+            }
+                                    MotionEvent.ACTION_CANCEL -> {
+                if (currentPoints.isNotEmpty()) saveCurrentGesture()
+                currentPoints.clear()
+                return true
+            }
+            MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> {
+                return true // 2nd finger ignore karo (Crash safety)
             }
         }
         return true
     }
 
-    private fun addPoint(event: android.view.MotionEvent, forceAdd: Boolean = false) {
+    private fun addPoint(event: MotionEvent, forceAdd: Boolean = false) {
         val relativeTime = event.eventTime - currentGestureDownTime
+        // Agar forceAdd true hai (DOWN/UP), fast-filter bypass karo
         if (currentPoints.isNotEmpty() && !forceAdd) {
             val last = currentPoints.last()
-            val samePlace = kotlin.math.abs(last.x - event.rawX) < 2f && kotlin.math.abs(last.y - event.rawY) < 2f
+            val samePlace = abs(last.x - event.rawX) < 2f && abs(last.y - event.rawY) < 2f
             val tooFast = relativeTime - last.t < 12
             if (samePlace && tooFast) return
         }
-        currentPoints.add(GesturePoint(x = event.rawX, y = event.rawY, t = relativeTime))
+        currentPoints.add(
+            GesturePoint(
+                x = event.rawX,
+                y = event.rawY,
+                t = relativeTime
+            )
+        )
     }
 
     private fun saveCurrentGesture() {
         if (currentPoints.isEmpty()) return
         val delayFromStart = currentGestureDownTime - recordingStartTime
-        recordedGestures.add(RecordedGesture(delayFromStart = delayFromStart, points = currentPoints.toList()))
-        currentPoints.clear()
+        recordedGestures.add(
+            RecordedGesture(
+                delayFromStart = delayFromStart,
+                points = currentPoints.toList()
+            )
+        )
     }
 
     fun getRecordedGestures(): List<RecordedGesture> {
