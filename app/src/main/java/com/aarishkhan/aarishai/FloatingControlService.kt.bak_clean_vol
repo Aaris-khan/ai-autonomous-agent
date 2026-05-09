@@ -25,13 +25,6 @@ import kotlin.math.abs
 
 class FloatingControlService : Service() {
 
-    companion object {
-        @Volatile var instance: FloatingControlService? = null
-    }
-
-    fun isRecordingActive(): Boolean = isRecording
-
-
     private lateinit var windowManager: WindowManager
     private var panelView: View? = null
     private var captureView: TouchCaptureView? = null
@@ -58,7 +51,6 @@ class FloatingControlService : Service() {
 
             override fun onCreate() {
         super.onCreate()
-        instance = this
         if (!startForegroundServiceNotification()) {
             stopSelf()
             return
@@ -387,26 +379,13 @@ class FloatingControlService : Service() {
         } catch (_: Exception) {}
     }
 
-    
-    fun recordSystemAction(actionType: Int) {
-        if (!isRecording) return
-        val view = captureView
-        if (view == null) {
-            android.widget.Toast.makeText(this, "Recording glass ready nahi hai", android.widget.Toast.LENGTH_SHORT).show()
-            return
-        }
-        view.addSystemGesture(actionType)
-        val msg = if (actionType == 1) { "🔙 BACK recorded" } else { "🗂️ RECENTS recorded" }
-        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
-    }
-    override fun onDestroy() {
+        override fun onDestroy() {
         playbackWatcherRunnable?.let { handler.removeCallbacks(it) }
         handler.removeCallbacksAndMessages(null)
         safeRemoveView(captureView)
         safeRemoveView(panelView)
         captureView = null
         panelView = null
-        if (instance == this) instance = null
         super.onDestroy()
     }
 
@@ -639,16 +618,7 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
         currentPoints.clear()
     }
 
-
-    fun addSystemGesture(actionType: Int) {
-        val dummyCoord = if (actionType == 1) -100f else -200f
-        val delay = (android.os.SystemClock.uptimeMillis() - recordingStartTime).coerceAtLeast(0L)
-        val points = listOf(GesturePoint(dummyCoord, dummyCoord, 100L))
-        recordedGestures.add(
-            RecordedGesture(delayFromStart = delay, points = points)
-        )
-    }
     fun getRecordedGestures(): List<RecordedGesture> {
-        return recordedGestures.sortedBy { it.delayFromStart }
+        return recordedGestures.toList()
     }
 }

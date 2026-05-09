@@ -177,13 +177,6 @@ class AutoActionService : AccessibilityService() {
         val points = recordedGesture.points
         if (points.isEmpty()) return
                 val firstPoint = points.first()
-        if (firstPoint.x <= -50f) {
-            when (firstPoint.x.toInt()) {
-                -100 -> performGlobalAction(GLOBAL_ACTION_BACK)
-                -200 -> performGlobalAction(GLOBAL_ACTION_RECENTS)
-            }
-            return
-        }
         val path = Path()
         val screenW = resources.displayMetrics.widthPixels.toFloat() - 1f
         val screenH = resources.displayMetrics.heightPixels.toFloat() - 1f
@@ -252,26 +245,6 @@ class AutoActionService : AccessibilityService() {
         }
     }
 
-
-    override fun onKeyEvent(event: android.view.KeyEvent): Boolean {
-        val fcs = FloatingControlService.instance
-        val isVolumeKey = event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP || event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN
-        
-        if (fcs != null && fcs.isRecordingActive() && isVolumeKey) {
-            if (event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                if (event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP) {
-                    fcs.recordSystemAction(1)
-                    performGlobalAction(GLOBAL_ACTION_BACK)
-                } else if (event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN) {
-                    fcs.recordSystemAction(2)
-                    performGlobalAction(GLOBAL_ACTION_RECENTS)
-                }
-            }
-            // DOWN aur UP dono consume karo
-            return true
-        }
-        return super.onKeyEvent(event)
-    }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
 
     override fun onInterrupt() {
