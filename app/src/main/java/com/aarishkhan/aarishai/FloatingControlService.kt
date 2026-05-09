@@ -35,6 +35,9 @@ class FloatingControlService : Service() {
 
     private lateinit var label: TextView
     private lateinit var btnStart: Button
+    private var btnSpeed: android.widget.Button? = null
+    private var btnSettings: android.widget.Button? = null
+    private var btnClear: android.widget.Button? = null
     private lateinit var btnLoop: Button
     private lateinit var btnSave: Button
     private lateinit var btnCut: Button
@@ -392,6 +395,8 @@ class FloatingControlService : Service() {
     private var glassHiddenAt = 0L
 
     // ✅ SAFE UI STATE FIX: Default parameter added to prevent compile errors
+    private fun closeSettingsPanel() {}
+
     private fun updateUIState(startText: String, showSave: Boolean, showOthers: Boolean, showCut: Boolean = true) {
         btnStart.text = startText
         val sVis = if (showSave) android.view.View.VISIBLE else android.view.View.GONE
