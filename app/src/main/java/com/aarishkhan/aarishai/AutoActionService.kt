@@ -255,14 +255,26 @@ class AutoActionService : AccessibilityService() {
 
         // Volume command system gestures
         if (firstPoint.x <= -50f) {
+            activeGestureCount.incrementAndGet()
+
             when (firstPoint.x.toInt()) {
                 -100 -> performGlobalAction(GLOBAL_ACTION_BACK)
                 -200 -> performGlobalAction(GLOBAL_ACTION_RECENTS)
             }
+
+            // System action ka callback nahi hota, isliye transition ke liye short guard delay
+            handler.postDelayed({
+                decrementActiveGestureSafely()
+            }, 450L)
+
             return
         }
 
-        val match = findBestSmartTarget(recordedGesture)
+        val movement = hasRealMovement(points)
+
+        // Smart node matching tap/long-press ke liye.
+        // Swipe/scroll mein original gesture path preserve karna safe hai.
+        val match = if (!movement) findBestSmartTarget(recordedGesture) else null
 
         val screenW = resources.displayMetrics.widthPixels.toFloat()
         val screenH = resources.displayMetrics.heightPixels.toFloat()
@@ -287,7 +299,6 @@ class AutoActionService : AccessibilityService() {
             match.bounds.top + (recordedGesture.insideYPercent.coerceIn(0f, 1f) * match.bounds.height())
         } else fallbackY
 
-        val movement = hasRealMovement(points)
         val duration = max(50L, points.last().t).coerceAtMost(60000L)
 
         // Normal tap ho aur strong node mil gaya ho, toh direct ACTION_CLICK try karo.
@@ -351,7 +362,35 @@ class AutoActionService : AccessibilityService() {
                     targetNode.getBoundsInScreen(targetBounds)
 
                     if (targetBounds.width() > 0 && targetBounds.height() > 0) {
-                        val finalScore = score + if (targetNode.isClickable) 12 else 0
+                        var finalScore = score + if (targetNode.isClickable) 12 else 0
+
+                        val screenW = resources.displayMetrics.widthPixels.toFloat().coerceAtLeast(1f)
+                        val screenH = resources.displayMetrics.heightPixels.toFloat().coerceAtLeast(1f)
+
+                        // Recording mein button/clickable-parent ka size save hota hai.
+                        // Isliye final parent bounds par bhi size score do.
+                        if (gesture.targetWPercent > 0f && gesture.targetHPercent > 0f) {
+                            val wNow = targetBounds.width() / screenW
+                            val hNow = targetBounds.height() / screenH
+                            val wDiff = kotlin.math.abs(wNow - gesture.targetWPercent)
+                            val hDiff = kotlin.math.abs(hNow - gesture.targetHPercent)
+
+                            if (wDiff < 0.04f && hDiff < 0.04f) finalScore += 25
+                            else if (wDiff < 0.08f && hDiff < 0.08f) finalScore += 12
+                        }
+
+                        // Duplicate Copy/Send jaise cases mein parent/current bounds ki position bhi use karo.
+                        if (gesture.xPercent > 0f && gesture.yPercent > 0f) {
+                            val cxP = targetBounds.exactCenterX() / screenW
+                            val cyP = targetBounds.exactCenterY() / screenH
+                            val dx = kotlin.math.abs(cxP - gesture.xPercent)
+                            val dy = kotlin.math.abs(cyP - gesture.yPercent)
+
+                            if (dx < 0.06f && dy < 0.06f) finalScore += 35
+                            else if (dx < 0.16f && dy < 0.16f) finalScore += 18
+                            else if (dx < 0.30f && dy < 0.30f) finalScore += 8
+                        }
+
                         if (best == null || finalScore > best!!.score) {
                             best = SmartMatch(targetNode, Rect(targetBounds), finalScore)
                         }
@@ -691,28 +730,48 @@ class AutoActionService : AccessibilityService() {
     ): AccessibilityNodeInfo? {
         if (root == null) return null
 
-        val stack = java.util.ArrayDeque<AccessibilityNodeInfo>()
-        stack.add(root)
+        val stack = java.util.ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
+        stack.add(Pair(root, 0))
 
-        var deepest: AccessibilityNodeInfo? = null
+        var bestNode: AccessibilityNodeInfo? = null
+        var bestScore = Int.MIN_VALUE
 
         while (!stack.isEmpty()) {
-            val node = stack.removeLast() ?: continue
+            val item = stack.removeLast()
+            val node = item.first
+            val depth = item.second
 
             val bounds = Rect()
             node.getBoundsInScreen(bounds)
 
             if (bounds.contains(x, y)) {
-                deepest = node
+                val area = (bounds.width() * bounds.height()).coerceAtLeast(1)
+                val clickableBonus = if (node.isClickable) 800 else 0
+                val leafBonus = if (node.childCount == 0) 300 else 0
+                val smallAreaBonus = 500000 / area.coerceAtLeast(1)
+
+                // Deep + clickable + leaf + small area = better actual tapped node
+                val candidateScore =
+                    (depth * 1000) +
+                    clickableBonus +
+                    leafBonus +
+                    smallAreaBonus
+
+                if (candidateScore > bestScore) {
+                    bestScore = candidateScore
+                    bestNode = node
+                }
 
                 for (i in 0 until node.childCount) {
                     val child = node.getChild(i)
-                    if (child != null) stack.add(child)
+                    if (child != null) {
+                        stack.add(Pair(child, depth + 1))
+                    }
                 }
             }
         }
 
-        return deepest
+        return bestNode
     }
 
     private fun findClickableParent(
