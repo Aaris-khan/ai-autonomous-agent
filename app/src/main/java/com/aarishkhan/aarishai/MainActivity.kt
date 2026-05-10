@@ -95,18 +95,11 @@ class MainActivity : Activity() {
             if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 startScreenCommandSystem()
             } else {
-                Toast.makeText(this, "Notification Denied! Phir bhi service start kar rahe hain...", Toast.LENGTH_SHORT).show()
-                try {
-                    val serviceIntent = Intent(this, FloatingControlService::class.java)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        startForegroundService(serviceIntent)
-                    } else {
-                        startService(serviceIntent)
-                    }
-                    moveTaskToBack(true)
-                } catch (e: Exception) {
-                    Toast.makeText(this, "Service start nahi hua: ${e.message}", Toast.LENGTH_LONG).show()
-                }
+                Toast.makeText(
+                    this,
+                    "Notification permission deny hai. Service start karne ke liye permission ON karo.",
+                    Toast.LENGTH_LONG
+                ).show()
             }
         }
     }

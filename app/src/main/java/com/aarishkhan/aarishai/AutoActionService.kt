@@ -257,12 +257,19 @@ class AutoActionService : AccessibilityService() {
         if (firstPoint.x <= -50f) {
             activeGestureCount.incrementAndGet()
 
-            when (firstPoint.x.toInt()) {
+            val ok = when (firstPoint.x.toInt()) {
                 -100 -> performGlobalAction(GLOBAL_ACTION_BACK)
                 -200 -> performGlobalAction(GLOBAL_ACTION_RECENTS)
+                else -> false
             }
 
-            // System action ka callback nahi hota, isliye transition ke liye short guard delay
+            if (!ok) {
+                decrementActiveGestureSafely()
+                showTinyToast("System action fail hua")
+                return
+            }
+
+            // BACK/RECENTS ke baad screen transition settle hone do
             handler.postDelayed({
                 decrementActiveGestureSafely()
             }, 450L)
@@ -373,7 +380,10 @@ class AutoActionService : AccessibilityService() {
         val stack = java.util.ArrayDeque<AccessibilityNodeInfo>()
         stack.add(root)
 
-        while (!stack.isEmpty()) {
+        var visitedNodes = 0
+
+        while (!stack.isEmpty() && visitedNodes < 900) {
+            visitedNodes++
             val node = stack.removeLast() ?: continue
 
             val bounds = Rect()

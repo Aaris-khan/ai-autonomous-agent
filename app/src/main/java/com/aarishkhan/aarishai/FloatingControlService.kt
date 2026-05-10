@@ -270,8 +270,12 @@ class FloatingControlService : Service() {
             oldPanelX = params.x
             oldPanelY = params.y
                         val density = resources.displayMetrics.density
-            params.x = resources.displayMetrics.widthPixels - (120 * density).toInt()
-            params.y = (60 * density).toInt()
+            val maxX = if (panel.width > 0) resources.displayMetrics.widthPixels - panel.width else resources.displayMetrics.widthPixels
+            val maxY = if (panel.height > 0) resources.displayMetrics.heightPixels - panel.height else resources.displayMetrics.heightPixels
+
+            params.x = (resources.displayMetrics.widthPixels - (120 * density).toInt()).coerceIn(0, if (maxX > 0) maxX else resources.displayMetrics.widthPixels)
+            params.y = (60 * density).toInt().coerceIn(0, if (maxY > 0) maxY else resources.displayMetrics.heightPixels)
+
             try {
                 windowManager.updateViewLayout(panel, params)
             } catch (_: Exception) {
@@ -370,7 +374,7 @@ class FloatingControlService : Service() {
         val dragSlop = 10f
 
         dragHandle.setOnTouchListener { _, event ->
-            when (event.action) {
+            when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     initialX = params.x
                     initialY = params.y
@@ -497,8 +501,9 @@ class FloatingControlService : Service() {
         if (newGestures.isEmpty()) return
         
         val mutable = unsavedGestures.toMutableList()
-        val lastGesture = unsavedGestures.lastOrNull()
-        val lastGestureEnd = (lastGesture?.delayFromStart ?: 0L) + (lastGesture?.points?.lastOrNull()?.t ?: 0L)
+        val lastGestureEnd = unsavedGestures.maxOfOrNull { g ->
+            g.delayFromStart + (g.points.lastOrNull()?.t ?: 0L)
+        } ?: 0L
         
         // Asli Navigation Gap: Naye Glass ke start time mein se Purane HIDE time ko minus karo
         val navigationGap = if (unsavedGestures.isNotEmpty() && glassHiddenAt > 0L) {
