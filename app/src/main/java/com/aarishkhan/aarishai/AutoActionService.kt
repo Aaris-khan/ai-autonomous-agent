@@ -305,9 +305,21 @@ class AutoActionService : AccessibilityService() {
         if (!movement && duration < 450L && match != null && match.score >= 100 && match.bounds.width() < (resources.displayMetrics.widthPixels * 0.35f) && match.bounds.height() < (resources.displayMetrics.heightPixels * 0.15f)) {
             val clickable = findClickableParent(match.node)
             if (clickable != null) {
-                val clicked = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                val clicked = try {
+                    clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                } catch (_: Exception) {
+                    false
+                }
+
                 if (clicked) {
                     showTinyToast("🎯 Smart Click")
+                    activeGestureCount.incrementAndGet()
+
+                    // Smart click ka callback nahi hota, isliye next step se pehle short wait
+                    handler.postDelayed({
+                        decrementActiveGestureSafely()
+                    }, 400L)
+
                     return
                 }
             }
@@ -358,6 +370,10 @@ class AutoActionService : AccessibilityService() {
                 val score = scoreNode(node, bounds, gesture)
                 if (score > 0) {
                     val targetNode = findClickableParent(node) ?: node
+                    if (!targetNode.isVisibleToUser || !targetNode.isEnabled) {
+                        continue
+                    }
+
                     val targetBounds = Rect()
                     targetNode.getBoundsInScreen(targetBounds)
 
@@ -413,6 +429,8 @@ class AutoActionService : AccessibilityService() {
         bounds: Rect,
         gesture: RecordedGesture
     ): Int {
+        if (!node.isVisibleToUser || !node.isEnabled) return 0
+
         var score = 0
 
         val nodeText = node.text?.toString()?.trim()
@@ -534,8 +552,9 @@ class AutoActionService : AccessibilityService() {
             maxDy = kotlin.math.max(maxDy, abs(p.y - first.y))
         }
 
-        // 8px tak natural finger drift maan lo, swipe nahi
-        return maxDx > 8f || maxDy > 8f
+        // High-density phones par tap drift zyada pixels hota hai.
+        val slop = 12f * resources.displayMetrics.density
+        return maxDx > slop || maxDy > slop
     }
 
     private fun performGestureAt(
@@ -544,6 +563,11 @@ class AutoActionService : AccessibilityService() {
         points: List<GesturePoint>
     ) {
         if (points.isEmpty()) return
+
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.N) {
+            Toast.makeText(this, "Gesture playback ke liye Android 7+ required hai", Toast.LENGTH_LONG).show()
+            return
+        }
 
         val firstPoint = points.first()
 
@@ -577,8 +601,8 @@ class AutoActionService : AccessibilityService() {
         }
 
         if (!movement) {
-            val safeX = (startX + 0.1f).coerceIn(1f, screenW)
-            val safeY = (startY + 0.1f).coerceIn(1f, screenH)
+            val safeX = (startX + 2f).coerceIn(2f, screenW)
+            val safeY = (startY + 2f).coerceIn(2f, screenH)
             path.lineTo(safeX, safeY)
         }
 
@@ -806,16 +830,23 @@ class AutoActionService : AccessibilityService() {
 
         if (fcs != null && fcs.isRecordingActive() && isVolumeKey) {
             if (event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                if (event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP) {
+                val ok = if (event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP) {
                     fcs.recordSystemAction(1)
                     performGlobalAction(GLOBAL_ACTION_BACK)
-                } else if (event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN) {
+                } else {
                     fcs.recordSystemAction(2)
                     performGlobalAction(GLOBAL_ACTION_RECENTS)
                 }
+
+                if (!ok) {
+                    showTinyToast("Volume system action fail hua")
+                }
+
+                return true
             }
 
-            return true
+            // ACTION_UP consume mat karo, warna kuch devices par key stuck behavior aa sakta hai
+            return false
         }
 
         return super.onKeyEvent(event)

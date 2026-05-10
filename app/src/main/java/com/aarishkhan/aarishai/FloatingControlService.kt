@@ -87,7 +87,7 @@ class FloatingControlService : Service() {
         }
             .setContentTitle("AarishAI Screen Command")
             .setContentText("Macro recorder is ready in background")
-            .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .setSmallIcon(R.drawable.ic_stat_aarish)
             .setOngoing(true)
             .build()
 
@@ -290,8 +290,13 @@ class FloatingControlService : Service() {
         val params = panelParams
         val panel = panelView
         if (params != null && panel != null) {
-            params.x = oldPanelX
-            params.y = oldPanelY
+            val metrics = resources.displayMetrics
+            val maxX = if (panel.width > 0) metrics.widthPixels - panel.width else metrics.widthPixels
+            val maxY = if (panel.height > 0) metrics.heightPixels - panel.height else metrics.heightPixels
+
+            params.x = oldPanelX.coerceIn(0, if (maxX > 0) maxX else metrics.widthPixels)
+            params.y = oldPanelY.coerceIn(0, if (maxY > 0) maxY else metrics.heightPixels)
+
             try {
                 windowManager.updateViewLayout(panel, params)
             } catch (_: Exception) {
@@ -534,7 +539,7 @@ class FloatingControlService : Service() {
             
             glassHiddenAt = android.os.SystemClock.uptimeMillis() // ACTUAL WAIT YAHAN SE START HOGA
             
-            updateUIState("+ ADD", true, false, true)
+            updateUIState("+ ADD", unsavedGestures.isNotEmpty(), false, true)
             android.widget.Toast.makeText(this, "Glass hat gaya! Naya page kholo aur + ADD dabao.", android.widget.Toast.LENGTH_LONG).show()
             
         } else if (unsavedGestures.isNotEmpty()) {
@@ -558,7 +563,6 @@ class FloatingControlService : Service() {
 
     private fun startRecording() {
         try { closeSettingsPanel() } catch (e: Exception) {}
-        isRecording = true
         updateUIState("HIDE", true, false, true)
 
         val touchLayer = TouchCaptureView(this)
@@ -584,6 +588,7 @@ class FloatingControlService : Service() {
         }
 
         captureView = touchLayer
+        isRecording = true
         bringPanelToFront()
         android.widget.Toast.makeText(this, "🟢 Glass ON! Wait aur Tap record honge.", android.widget.Toast.LENGTH_SHORT).show()
     }
@@ -605,7 +610,7 @@ class FloatingControlService : Service() {
         val saved = GestureStore.save(this, unsavedGestures)
         if (!saved) {
             android.widget.Toast.makeText(this, "❌ Memory save fail ho gayi, dobara SAVE dabao", android.widget.Toast.LENGTH_LONG).show()
-            updateUIState("+ ADD", true, false, true)
+            updateUIState("+ ADD", unsavedGestures.isNotEmpty(), false, true)
             return
         }
 
@@ -666,6 +671,14 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
     }
 
     override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+        // Multi-touch/pinch/two-finger accidental input ko record mat karo.
+        // Isse corrupt timestamps aur wrong path save hone se bachenge.
+        if (event.pointerCount > 1) {
+            currentPoints.clear()
+            currentSnapshot = null
+            return true
+        }
+
         when (event.actionMasked) {
             android.view.MotionEvent.ACTION_DOWN -> {
                 currentPoints.clear()
