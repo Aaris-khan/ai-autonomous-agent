@@ -179,14 +179,7 @@ object GestureStore {
     }
 
     fun hasRecording(context: Context): Boolean {
-        val raw = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-            .getString(KEY_GESTURES, null) ?: return false
-
-        return try {
-            JSONArray(raw).length() > 0
-        } catch (_: Exception) {
-            false
-        }
+        return load(context).isNotEmpty()
     }
 
     fun totalDuration(context: Context): Long {
@@ -203,7 +196,7 @@ object GestureStore {
             .remove(KEY_GESTURES)
             .putString(KEY_LOOP_MODE, "ONCE")
             .putInt(KEY_LOOP_VALUE, 1)
-            .apply()
+            .commit()
     }
 
     fun saveLoopSettings(context: Context, mode: String, value: Int) {
