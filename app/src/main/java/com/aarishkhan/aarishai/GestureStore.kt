@@ -15,6 +15,14 @@ data class TargetSnapshot(
     val targetDesc: String? = null,
     val targetId: String? = null,
     val targetClass: String? = null,
+
+    // 🔥 Context + DNA Fingerprint
+    val targetContextText: String? = null,
+    val targetChildText: String? = null,
+    val targetSiblingText: String? = null,
+    val targetRoleFlags: String? = null,
+    val targetTreePath: String? = null,
+
     val targetLeft: Int = -1,
     val targetTop: Int = -1,
     val targetRight: Int = -1,
@@ -36,6 +44,13 @@ data class RecordedGesture(
     val targetDesc: String? = null,
     val targetId: String? = null,
     val targetClass: String? = null,
+
+    // 🔥 Context + DNA Fingerprint
+    val targetContextText: String? = null,
+    val targetChildText: String? = null,
+    val targetSiblingText: String? = null,
+    val targetRoleFlags: String? = null,
+    val targetTreePath: String? = null,
 
     // Recording time bounds
     val targetLeft: Int = -1,
@@ -73,6 +88,11 @@ object GestureStore {
             gestureObject.put("targetDesc", gesture.targetDesc ?: "")
             gestureObject.put("targetId", gesture.targetId ?: "")
             gestureObject.put("targetClass", gesture.targetClass ?: "")
+            gestureObject.put("targetContextText", gesture.targetContextText ?: "")
+            gestureObject.put("targetChildText", gesture.targetChildText ?: "")
+            gestureObject.put("targetSiblingText", gesture.targetSiblingText ?: "")
+            gestureObject.put("targetRoleFlags", gesture.targetRoleFlags ?: "")
+            gestureObject.put("targetTreePath", gesture.targetTreePath ?: "")
 
             gestureObject.put("targetLeft", gesture.targetLeft)
             gestureObject.put("targetTop", gesture.targetTop)
@@ -122,6 +142,11 @@ object GestureStore {
                 val targetDesc = gestureObject.optString("targetDesc", "").takeIf { it.isNotBlank() }
                 val targetId = gestureObject.optString("targetId", "").takeIf { it.isNotBlank() }
                 val targetClass = gestureObject.optString("targetClass", "").takeIf { it.isNotBlank() }
+                val targetContextText = gestureObject.optString("targetContextText", "").takeIf { it.isNotBlank() }
+                val targetChildText = gestureObject.optString("targetChildText", "").takeIf { it.isNotBlank() }
+                val targetSiblingText = gestureObject.optString("targetSiblingText", "").takeIf { it.isNotBlank() }
+                val targetRoleFlags = gestureObject.optString("targetRoleFlags", "").takeIf { it.isNotBlank() }
+                val targetTreePath = gestureObject.optString("targetTreePath", "").takeIf { it.isNotBlank() }
 
                 val targetLeft = gestureObject.optInt("targetLeft", -1)
                 val targetTop = gestureObject.optInt("targetTop", -1)
@@ -157,6 +182,11 @@ object GestureStore {
                         targetDesc = targetDesc,
                         targetId = targetId,
                         targetClass = targetClass,
+                        targetContextText = targetContextText,
+                        targetChildText = targetChildText,
+                        targetSiblingText = targetSiblingText,
+                        targetRoleFlags = targetRoleFlags,
+                        targetTreePath = targetTreePath,
                         targetLeft = targetLeft,
                         targetTop = targetTop,
                         targetRight = targetRight,

@@ -757,6 +757,12 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
                 targetId = snapshot?.targetId,
                 targetClass = snapshot?.targetClass,
 
+                targetContextText = snapshot?.targetContextText,
+                targetChildText = snapshot?.targetChildText,
+                targetSiblingText = snapshot?.targetSiblingText,
+                targetRoleFlags = snapshot?.targetRoleFlags,
+                targetTreePath = snapshot?.targetTreePath,
+
                 targetLeft = snapshot?.targetLeft ?: -1,
                 targetTop = snapshot?.targetTop ?: -1,
                 targetRight = snapshot?.targetRight ?: -1,
