@@ -102,7 +102,7 @@ object GestureStore {
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_GESTURES, mainArray.toString())
-            .apply()
+            .commit()
     }
 
     fun load(context: Context): List<RecordedGesture> {
@@ -181,7 +181,7 @@ object GestureStore {
         val raw = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             .getString(KEY_GESTURES, null)
 
-        return !raw.isNullOrEmpty() && raw != "[]"
+        return load(context).isNotEmpty()
     }
 
     fun totalDuration(context: Context): Long {

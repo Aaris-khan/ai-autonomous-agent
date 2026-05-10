@@ -299,8 +299,18 @@ class FloatingControlService : Service() {
             private fun bringPanelToFront() {
         val panel = panelView ?: return
         val params = panelParams ?: return
-        safeRemoveView(panel)
-        safeAddView(panel, params, "Panel restore error")
+
+        try {
+            windowManager.removeView(panel)
+        } catch (_: Exception) {
+        }
+
+        val added = safeAddView(panel, params, "Panel restore error")
+        if (!added) {
+            panelView = null
+            Toast.makeText(this, "Panel wapas nahi aa paya, service band kar rahe hain", Toast.LENGTH_LONG).show()
+            stopSelf()
+        }
     }
 
      
@@ -308,7 +318,9 @@ class FloatingControlService : Service() {
     // BUG #4 FIX: Loop text update + visibility correctly set on save
      
         private fun stopEverythingAndClose() {
-                                if (unsavedGestures.isNotEmpty() && !pendingDiscardConfirm) {
+        val hasLiveRecording = isRecording && ((captureView as? TouchCaptureView)?.getRecordedGestures()?.isNotEmpty() == true)
+
+        if ((unsavedGestures.isNotEmpty() || hasLiveRecording) && !pendingDiscardConfirm) {
             pendingDiscardConfirm = true
             Toast.makeText(this, "Unsaved recording hai! Discard karne ke liye dobara CUT dabao.", Toast.LENGTH_LONG).show()
             handler.postDelayed({ pendingDiscardConfirm = false }, 5000)
@@ -411,6 +423,10 @@ class FloatingControlService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        return START_NOT_STICKY
+    }
 
 
     private var glassHiddenAt = 0L
@@ -613,9 +629,12 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
             android.view.MotionEvent.ACTION_MOVE -> {
                 addPoint(event, forceAdd = false)
             }
-            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+            android.view.MotionEvent.ACTION_UP -> {
                 addPoint(event, forceAdd = true)
                 saveCurrentGesture()
+            }
+            android.view.MotionEvent.ACTION_CANCEL -> {
+                currentPoints.clear()
             }
         }
         return true

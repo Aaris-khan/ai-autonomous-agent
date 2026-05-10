@@ -163,8 +163,18 @@ class AutoActionService : AccessibilityService() {
             gesture.delayFromStart + gestureDuration
         } ?: 0L
 
-        scheduledTasks.add(finishTask)
-        handler.postDelayed(finishTask, totalDuration)
+        val guardedFinishTask = object : Runnable {
+            override fun run() {
+                if (activeGestureCount.get() > 0 && isPlayingInternal) {
+                    handler.postDelayed(this, 150L)
+                } else {
+                    finishTask.run()
+                }
+            }
+        }
+
+        scheduledTasks.add(guardedFinishTask)
+        handler.postDelayed(guardedFinishTask, totalDuration + 300L)
     }
 
     private fun cancelCurrentRunningGesture() {
@@ -319,9 +329,11 @@ class AutoActionService : AccessibilityService() {
             score += 100
         }
 
-        if (!gesture.targetDesc.isNullOrBlank() &&
+        val exactDescMatch =
+            !gesture.targetDesc.isNullOrBlank() &&
             nodeDesc?.equals(gesture.targetDesc, ignoreCase = true) == true
-        ) {
+
+        if (exactDescMatch) {
             score += 90
         }
 
@@ -341,7 +353,8 @@ class AutoActionService : AccessibilityService() {
             score += 45
         }
 
-        if (!gesture.targetDesc.isNullOrBlank() &&
+        if (!exactDescMatch &&
+            !gesture.targetDesc.isNullOrBlank() &&
             nodeDesc?.contains(gesture.targetDesc, ignoreCase = true) == true
         ) {
             score += 45
@@ -594,10 +607,14 @@ class AutoActionService : AccessibilityService() {
         node: AccessibilityNodeInfo?
     ): AccessibilityNodeInfo? {
         var current = node
+        var depth = 0
 
-        while (current != null) {
+        while (current != null && depth < 30) {
             if (current.isClickable) return current
-            current = current.parent
+            val next = current.parent
+            if (next == current) return null
+            current = next
+            depth++
         }
 
         return null
