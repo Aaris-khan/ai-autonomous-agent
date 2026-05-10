@@ -305,11 +305,16 @@ class FloatingControlService : Service() {
         } catch (_: Exception) {
         }
 
-        val added = safeAddView(panel, params, "Panel restore error")
+        var added = safeAddView(panel, params, "Panel restore error")
         if (!added) {
-            panelView = null
-            Toast.makeText(this, "Panel wapas nahi aa paya, service band kar rahe hain", Toast.LENGTH_LONG).show()
-            stopSelf()
+            handler.postDelayed({
+                added = safeAddView(panel, params, "Panel retry error")
+                if (!added) {
+                    panelView = null
+                    Toast.makeText(this, "Panel wapas nahi aa paya, service band kar rahe hain", Toast.LENGTH_LONG).show()
+                    stopSelf()
+                }
+            }, 250L)
         }
     }
 
@@ -359,8 +364,8 @@ class FloatingControlService : Service() {
                 }
                                 MotionEvent.ACTION_MOVE -> {
                     val metrics = root.context.resources.displayMetrics
-                    val maxX = metrics.widthPixels - root.width
-                    val maxY = metrics.heightPixels - root.height
+                    val maxX = if (root.width > 0) metrics.widthPixels - root.width else metrics.widthPixels / 2
+                    val maxY = if (root.height > 0) metrics.heightPixels - root.height else metrics.heightPixels / 2
                     
                     val newX = initialX + (event.rawX - initialTouchX).toInt()
                     val newY = initialY + (event.rawY - initialTouchY).toInt()
@@ -563,7 +568,13 @@ class FloatingControlService : Service() {
             android.widget.Toast.makeText(this, "Koi recording nahi mili", android.widget.Toast.LENGTH_SHORT).show()
             return
         }
-        GestureStore.save(this, unsavedGestures)
+        val saved = GestureStore.save(this, unsavedGestures)
+        if (!saved) {
+            android.widget.Toast.makeText(this, "❌ Memory save fail ho gayi, dobara SAVE dabao", android.widget.Toast.LENGTH_LONG).show()
+            updateUIState("+ ADD", true, false, true)
+            return
+        }
+
         unsavedGestures = emptyList()
         updateUIState("PLAY", false, true, true)
         android.widget.Toast.makeText(this, "✅ Poori Memory Save ho gayi!", android.widget.Toast.LENGTH_SHORT).show()

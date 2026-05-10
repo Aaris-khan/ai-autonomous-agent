@@ -67,6 +67,11 @@ class MainActivity : Activity() {
             return
         }
 
+        if (FloatingControlService.instance != null) {
+            moveTaskToBack(true)
+            return
+        }
+
         try {
             val serviceIntent = Intent(this, FloatingControlService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

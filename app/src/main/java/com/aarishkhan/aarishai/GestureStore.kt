@@ -61,7 +61,7 @@ object GestureStore {
     private const val KEY_LOOP_MODE = "loop_mode"
     private const val KEY_LOOP_VALUE = "loop_value"
 
-    fun save(context: Context, gestures: List<RecordedGesture>) {
+    fun save(context: Context, gestures: List<RecordedGesture>): Boolean {
         val mainArray = JSONArray()
 
         gestures.forEach { gesture ->
@@ -99,7 +99,7 @@ object GestureStore {
             mainArray.put(gestureObject)
         }
 
-        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_GESTURES, mainArray.toString())
             .commit()
@@ -173,15 +173,20 @@ object GestureStore {
 
             result
         } catch (e: Exception) {
+            android.util.Log.e("GestureStore", "Recording load failed", e)
             emptyList()
         }
     }
 
     fun hasRecording(context: Context): Boolean {
         val raw = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-            .getString(KEY_GESTURES, null)
+            .getString(KEY_GESTURES, null) ?: return false
 
-        return load(context).isNotEmpty()
+        return try {
+            JSONArray(raw).length() > 0
+        } catch (_: Exception) {
+            false
+        }
     }
 
     fun totalDuration(context: Context): Long {

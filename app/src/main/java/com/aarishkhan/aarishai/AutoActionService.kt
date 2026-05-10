@@ -16,7 +16,7 @@ import kotlin.math.max
 class AutoActionService : AccessibilityService() {
 
     companion object {
-        private var instance: AutoActionService? = null
+        @Volatile private var instance: AutoActionService? = null
 
         fun playNow(context: Context): Boolean {
             val service = instance
@@ -114,42 +114,30 @@ class AutoActionService : AccessibilityService() {
     private fun playSequence(gestures: List<RecordedGesture>) {
         if (!isPlayingInternal) return
 
-        gestures.forEach { gesture ->
-            val task = object : Runnable {
-                override fun run() {
-                    scheduledTasks.remove(this)
-                    if (isPlayingInternal) {
-                        dispatchOneGesture(gesture)
-                    }
-                }
-            }
+        val orderedGestures = gestures.sortedBy { it.delayFromStart }
+        val sequenceStartTime = android.os.SystemClock.elapsedRealtime()
 
-            scheduledTasks.add(task)
-            handler.postDelayed(task, gesture.delayFromStart)
-        }
-
-        val finishTask = Runnable {
+        fun finishSequence() {
             loopCurrentCount++
 
             val mode = GestureStore.getLoopMode(this)
             val value = GestureStore.getLoopValue(this)
 
-            var shouldContinue = false
-
-            when (mode) {
-                "ONCE" -> shouldContinue = false
-                "COUNT" -> shouldContinue = loopCurrentCount < value
-                "INFINITE" -> shouldContinue = true
+            val shouldContinue = when (mode) {
+                "ONCE" -> false
+                "COUNT" -> loopCurrentCount < value
+                "INFINITE" -> true
                 "TIME" -> {
                     val elapsedMillis = android.os.SystemClock.elapsedRealtime() - loopStartTime
-                    shouldContinue = elapsedMillis < (value * 60 * 1000L)
+                    elapsedMillis < (value * 60 * 1000L)
                 }
+                else -> false
             }
 
             if (shouldContinue && isPlayingInternal) {
                 scheduledTasks.forEach { handler.removeCallbacks(it) }
                 scheduledTasks.clear()
-                playSequence(gestures)
+                playSequence(orderedGestures)
             } else {
                 isPlayingInternal = false
                 scheduledTasks.clear()
@@ -158,23 +146,71 @@ class AutoActionService : AccessibilityService() {
             }
         }
 
-        val totalDuration = gestures.maxOfOrNull { gesture ->
-            val gestureDuration = (gesture.points.lastOrNull()?.t ?: 0L).coerceAtMost(60000L)
-            gesture.delayFromStart + gestureDuration
-        } ?: 0L
+        fun scheduleIndex(index: Int) {
+            if (!isPlayingInternal) return
 
-        val guardedFinishTask = object : Runnable {
-            override fun run() {
-                if (activeGestureCount.get() > 0 && isPlayingInternal) {
-                    handler.postDelayed(this, 150L)
-                } else {
-                    finishTask.run()
+            if (index >= orderedGestures.size) {
+                val finishWaiter = object : Runnable {
+                    override fun run() {
+                        scheduledTasks.remove(this)
+                        if (!isPlayingInternal) return
+
+                        if (activeGestureCount.get() > 0) {
+                            scheduledTasks.add(this)
+                            handler.postDelayed(this, 150L)
+                        } else {
+                            finishSequence()
+                        }
+                    }
+                }
+
+                scheduledTasks.add(finishWaiter)
+                handler.postDelayed(finishWaiter, 250L)
+                return
+            }
+
+            val gesture = orderedGestures[index]
+            val elapsed = android.os.SystemClock.elapsedRealtime() - sequenceStartTime
+            val delay = (gesture.delayFromStart - elapsed).coerceAtLeast(0L)
+
+            val task = object : Runnable {
+                override fun run() {
+                    scheduledTasks.remove(this)
+                    if (!isPlayingInternal) return
+
+                    // Agar previous gesture abhi bhi system mein active hai, wait karo
+                    if (activeGestureCount.get() > 0) {
+                        scheduledTasks.add(this)
+                        handler.postDelayed(this, 60L)
+                        return
+                    }
+
+                    dispatchOneGesture(gesture)
+
+                    val waitForGestureFinish = object : Runnable {
+                        override fun run() {
+                            scheduledTasks.remove(this)
+                            if (!isPlayingInternal) return
+
+                            if (activeGestureCount.get() > 0) {
+                                scheduledTasks.add(this)
+                                handler.postDelayed(this, 60L)
+                            } else {
+                                scheduleIndex(index + 1)
+                            }
+                        }
+                    }
+
+                    scheduledTasks.add(waitForGestureFinish)
+                    handler.postDelayed(waitForGestureFinish, 60L)
                 }
             }
+
+            scheduledTasks.add(task)
+            handler.postDelayed(task, delay)
         }
 
-        scheduledTasks.add(guardedFinishTask)
-        handler.postDelayed(guardedFinishTask, totalDuration + 300L)
+        scheduleIndex(0)
     }
 
     private fun cancelCurrentRunningGesture() {
@@ -255,7 +291,7 @@ class AutoActionService : AccessibilityService() {
         val duration = max(50L, points.last().t).coerceAtMost(60000L)
 
         // Normal tap ho aur strong node mil gaya ho, toh direct ACTION_CLICK try karo.
-        if (!movement && duration < 650L && match != null && match.score >= 90 && match.bounds.width() < (resources.displayMetrics.widthPixels * 0.55f)) {
+        if (!movement && duration < 450L && match != null && match.score >= 100 && match.bounds.width() < (resources.displayMetrics.widthPixels * 0.35f) && match.bounds.height() < (resources.displayMetrics.heightPixels * 0.15f)) {
             val clickable = findClickableParent(match.node)
             if (clickable != null) {
                 val clicked = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
@@ -283,9 +319,11 @@ class AutoActionService : AccessibilityService() {
         val root = getRealAppRoot() ?: return null
 
         var best: SmartMatch? = null
+        val stack = java.util.ArrayDeque<AccessibilityNodeInfo>()
+        stack.add(root)
 
-        fun visit(node: AccessibilityNodeInfo?) {
-            if (node == null) return
+        while (!stack.isEmpty()) {
+            val node = stack.removeLast() ?: continue
 
             val bounds = Rect()
             node.getBoundsInScreen(bounds)
@@ -298,17 +336,12 @@ class AutoActionService : AccessibilityService() {
             }
 
             for (i in 0 until node.childCount) {
-                visit(node.getChild(i))
+                val child = node.getChild(i)
+                if (child != null) stack.add(child)
             }
         }
 
-        visit(root)
-
         val finalBest = best ?: return null
-
-        // Safety gate:
-        // 80+ = strong text/id/desc match
-        // 55+ = icon/class/size/position match
         return if (finalBest.score >= 55) finalBest else null
     }
 
@@ -411,16 +444,19 @@ class AutoActionService : AccessibilityService() {
 
     private fun hasRealMovement(points: List<GesturePoint>): Boolean {
         if (points.size <= 1) return false
+
         val first = points.first()
+        var maxDx = 0f
+        var maxDy = 0f
 
         for (i in 1 until points.size) {
             val p = points[i]
-            if (abs(p.x - first.x) > 2f || abs(p.y - first.y) > 2f) {
-                return true
-            }
+            maxDx = kotlin.math.max(maxDx, abs(p.x - first.x))
+            maxDy = kotlin.math.max(maxDy, abs(p.y - first.y))
         }
 
-        return false
+        // 8px tak natural finger drift maan lo, swipe nahi
+        return maxDx > 8f || maxDy > 8f
     }
 
     private fun performGestureAt(
@@ -447,7 +483,7 @@ class AutoActionService : AccessibilityService() {
             for (i in 1 until points.size) {
                 val p = points[i]
 
-                if (abs(p.x - firstPoint.x) > 2f || abs(p.y - firstPoint.y) > 2f) {
+                if (abs(p.x - firstPoint.x) > 8f || abs(p.y - firstPoint.y) > 8f) {
                     movement = true
                 }
 
@@ -515,29 +551,59 @@ class AutoActionService : AccessibilityService() {
 
 
     private fun getRealAppRoot(): AccessibilityNodeInfo? {
+        return getRealAppRootForPoint(null, null)
+    }
+
+    private fun getRealAppRootForPoint(tapX: Int?, tapY: Int?): AccessibilityNodeInfo? {
         val myPackage = packageName
+        var bestRoot: AccessibilityNodeInfo? = null
+        var bestScore = Int.MIN_VALUE
 
-        try {
-            for (window in windows) {
-                val root = window.root ?: continue
-                val pkg = root.packageName?.toString() ?: ""
-
-                // Apne AarishAI overlay/panel ko skip karo
-                if (pkg == myPackage) continue
-
-                val bounds = Rect()
-                root.getBoundsInScreen(bounds)
-
-                if (bounds.width() > 0 && bounds.height() > 0) {
-                    return root
-                }
-            }
-        } catch (_: Exception) {
+        fun isBadPackage(pkg: String): Boolean {
+            return pkg == myPackage ||
+                pkg == "android" ||
+                pkg == "com.android.systemui" ||
+                pkg.contains("inputmethod", ignoreCase = true) ||
+                pkg.contains("keyboard", ignoreCase = true)
         }
 
-        val root = rootInActiveWindow ?: return null
-        val pkg = root.packageName?.toString() ?: ""
-        return if (pkg == myPackage) null else root
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+            try {
+                for (window in windows) {
+                    if (window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue
+
+                    val root = window.root ?: continue
+                    val pkg = root.packageName?.toString() ?: ""
+
+                    if (isBadPackage(pkg)) continue
+
+                    val bounds = Rect()
+                    root.getBoundsInScreen(bounds)
+
+                    if (bounds.width() <= 0 || bounds.height() <= 0) continue
+
+                    if (tapX != null && tapY != null && !bounds.contains(tapX, tapY)) {
+                        continue
+                    }
+
+                    val area = bounds.width() * bounds.height()
+                    val activeBonus = if (window.isActive || window.isFocused) 1_000_000 else 0
+                    val score = area + activeBonus
+
+                    if (score > bestScore) {
+                        bestScore = score
+                        bestRoot = root
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
+
+        if (bestRoot != null) return bestRoot
+
+        val fallbackRoot = rootInActiveWindow ?: return null
+        val fallbackPkg = fallbackRoot.packageName?.toString() ?: ""
+        return if (isBadPackage(fallbackPkg)) null else fallbackRoot
     }
 
     // ==========================================================
@@ -549,7 +615,7 @@ class AutoActionService : AccessibilityService() {
         screenW: Float,
         screenH: Float
     ): TargetSnapshot? {
-        val root = getRealAppRoot() ?: return null
+        val root = getRealAppRootForPoint(x, y) ?: return null
         val touchedNode = findDeepestNodeAtCoordinate(root, x, y) ?: return null
 
         val clickNode = findClickableParent(touchedNode) ?: touchedNode
@@ -585,18 +651,24 @@ class AutoActionService : AccessibilityService() {
     ): AccessibilityNodeInfo? {
         if (root == null) return null
 
-        val bounds = Rect()
-        root.getBoundsInScreen(bounds)
+        val stack = java.util.ArrayDeque<AccessibilityNodeInfo>()
+        stack.add(root)
 
-        if (!bounds.contains(x, y)) return null
+        var deepest: AccessibilityNodeInfo? = null
 
-        var deepest: AccessibilityNodeInfo = root
+        while (!stack.isEmpty()) {
+            val node = stack.removeLast() ?: continue
 
-        for (i in 0 until root.childCount) {
-            val child = root.getChild(i)
-            val match = findDeepestNodeAtCoordinate(child, x, y)
-            if (match != null) {
-                deepest = match
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+
+            if (bounds.contains(x, y)) {
+                deepest = node
+
+                for (i in 0 until node.childCount) {
+                    val child = node.getChild(i)
+                    if (child != null) stack.add(child)
+                }
             }
         }
 
