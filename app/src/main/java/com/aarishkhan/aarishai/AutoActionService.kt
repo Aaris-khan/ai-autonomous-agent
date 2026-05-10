@@ -316,7 +316,22 @@ class AutoActionService : AccessibilityService() {
     }
 
     private fun findBestSmartTarget(gesture: RecordedGesture): SmartMatch? {
-        val root = getRealAppRoot() ?: return null
+        val screenW = resources.displayMetrics.widthPixels.toFloat().coerceAtLeast(1f)
+        val screenH = resources.displayMetrics.heightPixels.toFloat().coerceAtLeast(1f)
+
+        val fallbackX = if (gesture.xPercent > 0f) {
+            gesture.xPercent * screenW
+        } else {
+            gesture.points.firstOrNull()?.x ?: 0f
+        }
+
+        val fallbackY = if (gesture.yPercent > 0f) {
+            gesture.yPercent * screenH
+        } else {
+            gesture.points.firstOrNull()?.y ?: 0f
+        }
+
+        val root = getRealAppRootForPoint(fallbackX.toInt(), fallbackY.toInt()) ?: return null
 
         var best: SmartMatch? = null
         val stack = java.util.ArrayDeque<AccessibilityNodeInfo>()
@@ -330,8 +345,17 @@ class AutoActionService : AccessibilityService() {
 
             if (bounds.width() > 0 && bounds.height() > 0) {
                 val score = scoreNode(node, bounds, gesture)
-                if (score > 0 && (best == null || score > best!!.score)) {
-                    best = SmartMatch(node, Rect(bounds), score)
+                if (score > 0) {
+                    val targetNode = findClickableParent(node) ?: node
+                    val targetBounds = Rect()
+                    targetNode.getBoundsInScreen(targetBounds)
+
+                    if (targetBounds.width() > 0 && targetBounds.height() > 0) {
+                        val finalScore = score + if (targetNode.isClickable) 12 else 0
+                        if (best == null || finalScore > best!!.score) {
+                            best = SmartMatch(targetNode, Rect(targetBounds), finalScore)
+                        }
+                    }
                 }
             }
 
@@ -394,8 +418,17 @@ class AutoActionService : AccessibilityService() {
         }
 
         // Icon/button fingerprint
-        if (!gesture.targetClass.isNullOrBlank() && nodeClass == gesture.targetClass) {
-            score += 20
+        if (!gesture.targetClass.isNullOrBlank() && !nodeClass.isNullOrBlank()) {
+            val savedSimple = gesture.targetClass.substringAfterLast('.').lowercase()
+            val nowSimple = nodeClass.substringAfterLast('.').lowercase()
+
+            if (savedSimple == nowSimple ||
+                (savedSimple.contains("button") && nowSimple.contains("button")) ||
+                (savedSimple.contains("text") && nowSimple.contains("text")) ||
+                (savedSimple.contains("image") && nowSimple.contains("image"))
+            ) {
+                score += 18
+            }
         }
 
         val screenW = resources.displayMetrics.widthPixels.toFloat().coerceAtLeast(1f)
@@ -423,11 +456,18 @@ class AutoActionService : AccessibilityService() {
             if (dx < 0.05f && dy < 0.05f) score += 60
             else if (dx < 0.15f && dy < 0.15f) score += 30
             else if (dx < 0.28f && dy < 0.28f) score += 10
-            else if (dx > 0.40f || dy > 0.40f) score -= 50
+            else if (dx > 0.40f || dy > 0.40f) {
+                val strongIdentity =
+                    (!gesture.targetId.isNullOrBlank() && nodeId == gesture.targetId) ||
+                    exactTextMatch ||
+                    exactDescMatch
+
+                score -= if (strongIdentity) 10 else 45
+            }
         }
 
         if (node.isClickable) score += 8
-        if (findClickableParent(node) != null) score += 8
+        // Parent traversal scoring removed; candidate normalization happens in findBestSmartTarget().
 
         // Agar kuch bhi identity nahi hai, sirf random coordinate par trust mat karo.
         val hasAnyIdentity =

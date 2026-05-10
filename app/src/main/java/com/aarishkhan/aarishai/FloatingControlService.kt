@@ -240,8 +240,13 @@ class FloatingControlService : Service() {
                 val watcher = object : Runnable {
             override fun run() {
                                 if (!AutoActionService.isPlaying()) {
-                    if (!isRecording && btnStart.text == "STOP") {
-                        btnStart.text = "PLAY"
+                    if (!isRecording) {
+                        updateUIState(
+                            if (GestureStore.hasRecording(this@FloatingControlService)) "PLAY" else "START",
+                            false,
+                            true,
+                            true
+                        )
                         restorePanelUI()
                     }
                     playbackWatcherRunnable = null
@@ -305,13 +310,17 @@ class FloatingControlService : Service() {
         } catch (_: Exception) {
         }
 
-        var added = safeAddView(panel, params, "Panel restore error")
-        if (!added) {
+        val firstAdded = safeAddView(panel, params, "Panel restore error")
+        if (!firstAdded) {
             handler.postDelayed({
-                added = safeAddView(panel, params, "Panel retry error")
-                if (!added) {
+                val retryAdded = safeAddView(panel, params, "Panel retry error")
+                if (!retryAdded) {
                     panelView = null
-                    Toast.makeText(this, "Panel wapas nahi aa paya, service band kar rahe hain", Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                        this,
+                        "Panel wapas nahi aa paya, service band kar rahe hain",
+                        Toast.LENGTH_LONG
+                    ).show()
                     stopSelf()
                 }
             }, 250L)
@@ -352,6 +361,8 @@ class FloatingControlService : Service() {
         var initialY = 0
         var initialTouchX = 0f
         var initialTouchY = 0f
+        var isDragging = false
+        val dragSlop = 10f
 
         dragHandle.setOnTouchListener { _, event ->
             when (event.action) {
@@ -360,22 +371,42 @@ class FloatingControlService : Service() {
                     initialY = params.y
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
+                    isDragging = false
                     true
                 }
-                                MotionEvent.ACTION_MOVE -> {
-                    val metrics = root.context.resources.displayMetrics
-                    val maxX = if (root.width > 0) metrics.widthPixels - root.width else metrics.widthPixels / 2
-                    val maxY = if (root.height > 0) metrics.heightPixels - root.height else metrics.heightPixels / 2
-                    
-                    val newX = initialX + (event.rawX - initialTouchX).toInt()
-                    val newY = initialY + (event.rawY - initialTouchY).toInt()
-                    
-                    params.x = newX.coerceIn(0, if (maxX > 0) maxX else metrics.widthPixels)
-                    params.y = newY.coerceIn(0, if (maxY > 0) maxY else metrics.heightPixels)
-                    
-                    safeUpdateView(root, params)
+
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - initialTouchX
+                    val dy = event.rawY - initialTouchY
+
+                    if (!isDragging &&
+                        (kotlin.math.abs(dx) > dragSlop || kotlin.math.abs(dy) > dragSlop)
+                    ) {
+                        isDragging = true
+                    }
+
+                    if (isDragging) {
+                        val metrics = root.context.resources.displayMetrics
+                        val maxX = if (root.width > 0) metrics.widthPixels - root.width else metrics.widthPixels / 2
+                        val maxY = if (root.height > 0) metrics.heightPixels - root.height else metrics.heightPixels / 2
+
+                        val newX = initialX + dx.toInt()
+                        val newY = initialY + dy.toInt()
+
+                        params.x = newX.coerceIn(0, if (maxX > 0) maxX else metrics.widthPixels)
+                        params.y = newY.coerceIn(0, if (maxY > 0) maxY else metrics.heightPixels)
+
+                        safeUpdateView(root, params)
+                    }
+
                     true
                 }
+
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    isDragging = false
+                    true
+                }
+
                 else -> true
             }
         }
@@ -512,9 +543,12 @@ class FloatingControlService : Service() {
             try { closeSettingsPanel() } catch(e: Exception) {}
             val started = AutoActionService.playNow(this)
             if (started) {
-                updateUIState("STOP", false, false, false) // CUT button hide
+                updateUIState("STOP", false, false, false)
                 hidePanelUIForPlayback()
                 checkPlaybackStateContinuously()
+            } else {
+                updateUIState("PLAY", false, true, true)
+                restorePanelUI()
             }
         } else {
             unsavedGestures = emptyList()
@@ -619,6 +653,7 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
     
     private val recordingStartTime = android.os.SystemClock.uptimeMillis()
     private var currentGestureDownTime = 0L
+    private var currentSnapshot: TargetSnapshot? = null
 
     init {
         isClickable = true
@@ -636,6 +671,9 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
                 currentPoints.clear()
                 currentGestureDownTime = event.eventTime
                 addPoint(event, forceAdd = true)
+
+                // Button/symbol ka snapshot DOWN par lo, screen change hone se pehle
+                currentSnapshot = captureSnapshotFor(event.rawX.toInt(), event.rawY.toInt())
             }
             android.view.MotionEvent.ACTION_MOVE -> {
                 addPoint(event, forceAdd = false)
@@ -646,6 +684,7 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
             }
             android.view.MotionEvent.ACTION_CANCEL -> {
                 currentPoints.clear()
+                currentSnapshot = null
             }
         }
         return true
@@ -662,6 +701,19 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
         currentPoints.add(GesturePoint(x = event.rawX, y = event.rawY, t = relativeTime))
     }
 
+    private fun captureSnapshotFor(x: Int, y: Int): TargetSnapshot? {
+        val metrics = resources.displayMetrics
+        val screenW = metrics.widthPixels.toFloat().coerceAtLeast(1f)
+        val screenH = metrics.heightPixels.toFloat().coerceAtLeast(1f)
+
+        return AutoActionService.captureTargetSnapshot(
+            x,
+            y,
+            screenW,
+            screenH
+        )
+    }
+
     private fun saveCurrentGesture() {
         if (currentPoints.isEmpty()) return
 
@@ -672,11 +724,9 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
         val screenW = metrics.widthPixels.toFloat().coerceAtLeast(1f)
         val screenH = metrics.heightPixels.toFloat().coerceAtLeast(1f)
 
-        val snapshot = AutoActionService.captureTargetSnapshot(
+        val snapshot = currentSnapshot ?: captureSnapshotFor(
             firstP.x.toInt(),
-            firstP.y.toInt(),
-            screenW,
-            screenH
+            firstP.y.toInt()
         )
 
         recordedGestures.add(
@@ -705,6 +755,7 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
         )
 
         currentPoints.clear()
+        currentSnapshot = null
     }
 
 
