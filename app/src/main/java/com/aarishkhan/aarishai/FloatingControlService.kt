@@ -458,7 +458,7 @@ class FloatingControlService : Service() {
         }
         
         newGestures.forEach { g -> 
-            mutable.add(RecordedGesture(delayFromStart = g.delayFromStart + timeOffset, points = g.points))
+            mutable.add(g.copy(delayFromStart = g.delayFromStart + timeOffset))
         }
         
         unsavedGestures = mutable
@@ -634,8 +634,44 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
 
     private fun saveCurrentGesture() {
         if (currentPoints.isEmpty()) return
+
         val delayFromStart = currentGestureDownTime - recordingStartTime
-        recordedGestures.add(RecordedGesture(delayFromStart = delayFromStart, points = currentPoints.toList()))
+        val firstP = currentPoints.first()
+
+        val metrics = resources.displayMetrics
+        val screenW = metrics.widthPixels.toFloat().coerceAtLeast(1f)
+        val screenH = metrics.heightPixels.toFloat().coerceAtLeast(1f)
+
+        val snapshot = AutoActionService.captureTargetSnapshot(
+            firstP.x.toInt(),
+            firstP.y.toInt(),
+            screenW,
+            screenH
+        )
+
+        recordedGestures.add(
+            RecordedGesture(
+                delayFromStart = delayFromStart,
+                points = currentPoints.toList(),
+
+                targetText = snapshot?.targetText,
+                targetDesc = snapshot?.targetDesc,
+                targetId = snapshot?.targetId,
+                targetClass = snapshot?.targetClass,
+
+                targetLeft = snapshot?.targetLeft ?: -1,
+                targetTop = snapshot?.targetTop ?: -1,
+                targetRight = snapshot?.targetRight ?: -1,
+                targetBottom = snapshot?.targetBottom ?: -1,
+
+                xPercent = snapshot?.xPercent ?: (firstP.x / screenW),
+                yPercent = snapshot?.yPercent ?: (firstP.y / screenH),
+
+                targetWPercent = snapshot?.targetWPercent ?: 0f,
+                targetHPercent = snapshot?.targetHPercent ?: 0f
+            )
+        )
+
         currentPoints.clear()
     }
 

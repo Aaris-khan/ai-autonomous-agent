@@ -1,4 +1,240 @@
-package com.aarishkhan.aarishai
+import os
+import re
+
+BASE = "app/src/main/java/com/aarishkhan/aarishai"
+GS = f"{BASE}/GestureStore.kt"
+AAS = f"{BASE}/AutoActionService.kt"
+FCS = f"{BASE}/FloatingControlService.kt"
+ACC = "app/src/main/res/xml/accessibility_service_config.xml"
+
+print("🚀 Level 1 Smart Target Fingerprint Engine apply ho raha hai...")
+
+# ==========================================================
+# 1) GestureStore.kt — X/Y ke sath button ki kundali save
+# ==========================================================
+gesture_store_code = r'''package com.aarishkhan.aarishai
+
+import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
+
+data class GesturePoint(
+    val x: Float,
+    val y: Float,
+    val t: Long
+)
+
+data class TargetSnapshot(
+    val targetText: String? = null,
+    val targetDesc: String? = null,
+    val targetId: String? = null,
+    val targetClass: String? = null,
+    val targetLeft: Int = -1,
+    val targetTop: Int = -1,
+    val targetRight: Int = -1,
+    val targetBottom: Int = -1,
+    val xPercent: Float = 0f,
+    val yPercent: Float = 0f,
+    val targetWPercent: Float = 0f,
+    val targetHPercent: Float = 0f
+)
+
+data class RecordedGesture(
+    val delayFromStart: Long,
+    val points: List<GesturePoint>,
+
+    // 🔥 Level 1 Smart Fingerprint
+    val targetText: String? = null,
+    val targetDesc: String? = null,
+    val targetId: String? = null,
+    val targetClass: String? = null,
+
+    // Recording time bounds
+    val targetLeft: Int = -1,
+    val targetTop: Int = -1,
+    val targetRight: Int = -1,
+    val targetBottom: Int = -1,
+
+    // Screen percentage fallback
+    val xPercent: Float = 0f,
+    val yPercent: Float = 0f,
+
+    // Button size fingerprint
+    val targetWPercent: Float = 0f,
+    val targetHPercent: Float = 0f
+)
+
+object GestureStore {
+    private const val PREF_NAME = "screen_command_store"
+    private const val KEY_GESTURES = "recorded_gestures"
+
+    private const val KEY_LOOP_MODE = "loop_mode"
+    private const val KEY_LOOP_VALUE = "loop_value"
+
+    fun save(context: Context, gestures: List<RecordedGesture>) {
+        val mainArray = JSONArray()
+
+        gestures.forEach { gesture ->
+            val gestureObject = JSONObject()
+
+            gestureObject.put("delayFromStart", gesture.delayFromStart)
+
+            gestureObject.put("targetText", gesture.targetText ?: "")
+            gestureObject.put("targetDesc", gesture.targetDesc ?: "")
+            gestureObject.put("targetId", gesture.targetId ?: "")
+            gestureObject.put("targetClass", gesture.targetClass ?: "")
+
+            gestureObject.put("targetLeft", gesture.targetLeft)
+            gestureObject.put("targetTop", gesture.targetTop)
+            gestureObject.put("targetRight", gesture.targetRight)
+            gestureObject.put("targetBottom", gesture.targetBottom)
+
+            gestureObject.put("xPercent", gesture.xPercent.toDouble())
+            gestureObject.put("yPercent", gesture.yPercent.toDouble())
+            gestureObject.put("targetWPercent", gesture.targetWPercent.toDouble())
+            gestureObject.put("targetHPercent", gesture.targetHPercent.toDouble())
+
+            val pointsArray = JSONArray()
+            gesture.points.forEach { point ->
+                val pointObject = JSONObject()
+                pointObject.put("x", point.x.toDouble())
+                pointObject.put("y", point.y.toDouble())
+                pointObject.put("t", point.t)
+                pointsArray.put(pointObject)
+            }
+
+            gestureObject.put("points", pointsArray)
+            mainArray.put(gestureObject)
+        }
+
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_GESTURES, mainArray.toString())
+            .apply()
+    }
+
+    fun load(context: Context): List<RecordedGesture> {
+        val json = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_GESTURES, null) ?: return emptyList()
+
+        return try {
+            val mainArray = JSONArray(json)
+            val result = mutableListOf<RecordedGesture>()
+
+            for (i in 0 until mainArray.length()) {
+                val gestureObject = mainArray.getJSONObject(i)
+
+                val delayFromStart = gestureObject.getLong("delayFromStart")
+
+                val targetText = gestureObject.optString("targetText", "").takeIf { it.isNotBlank() }
+                val targetDesc = gestureObject.optString("targetDesc", "").takeIf { it.isNotBlank() }
+                val targetId = gestureObject.optString("targetId", "").takeIf { it.isNotBlank() }
+                val targetClass = gestureObject.optString("targetClass", "").takeIf { it.isNotBlank() }
+
+                val targetLeft = gestureObject.optInt("targetLeft", -1)
+                val targetTop = gestureObject.optInt("targetTop", -1)
+                val targetRight = gestureObject.optInt("targetRight", -1)
+                val targetBottom = gestureObject.optInt("targetBottom", -1)
+
+                val xPercent = gestureObject.optDouble("xPercent", 0.0).toFloat()
+                val yPercent = gestureObject.optDouble("yPercent", 0.0).toFloat()
+                val targetWPercent = gestureObject.optDouble("targetWPercent", 0.0).toFloat()
+                val targetHPercent = gestureObject.optDouble("targetHPercent", 0.0).toFloat()
+
+                val pointsArray = gestureObject.getJSONArray("points")
+                val points = mutableListOf<GesturePoint>()
+
+                for (j in 0 until pointsArray.length()) {
+                    val pointObject = pointsArray.getJSONObject(j)
+                    points.add(
+                        GesturePoint(
+                            x = pointObject.getDouble("x").toFloat(),
+                            y = pointObject.getDouble("y").toFloat(),
+                            t = pointObject.getLong("t")
+                        )
+                    )
+                }
+
+                result.add(
+                    RecordedGesture(
+                        delayFromStart = delayFromStart,
+                        points = points,
+                        targetText = targetText,
+                        targetDesc = targetDesc,
+                        targetId = targetId,
+                        targetClass = targetClass,
+                        targetLeft = targetLeft,
+                        targetTop = targetTop,
+                        targetRight = targetRight,
+                        targetBottom = targetBottom,
+                        xPercent = xPercent,
+                        yPercent = yPercent,
+                        targetWPercent = targetWPercent,
+                        targetHPercent = targetHPercent
+                    )
+                )
+            }
+
+            result
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun hasRecording(context: Context): Boolean {
+        val raw = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_GESTURES, null)
+
+        return !raw.isNullOrEmpty() && raw != "[]"
+    }
+
+    fun totalDuration(context: Context): Long {
+        val gestures = load(context)
+        return gestures.maxOfOrNull { gesture ->
+            val gestureDuration = (gesture.points.lastOrNull()?.t ?: 0L).coerceAtMost(60000L)
+            gesture.delayFromStart + gestureDuration
+        } ?: 0L
+    }
+
+    fun clear(context: Context) {
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove(KEY_GESTURES)
+            .putString(KEY_LOOP_MODE, "ONCE")
+            .putInt(KEY_LOOP_VALUE, 1)
+            .apply()
+    }
+
+    fun saveLoopSettings(context: Context, mode: String, value: Int) {
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_LOOP_MODE, mode)
+            .putInt(KEY_LOOP_VALUE, value)
+            .apply()
+    }
+
+    fun getLoopMode(context: Context): String {
+        return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_LOOP_MODE, "ONCE") ?: "ONCE"
+    }
+
+    fun getLoopValue(context: Context): Int {
+        return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .getInt(KEY_LOOP_VALUE, 1)
+    }
+}
+'''
+
+with open(GS, "w", encoding="utf-8") as f:
+    f.write(gesture_store_code)
+
+print("✅ GestureStore.kt upgraded")
+
+
+# ==========================================================
+# 2) AutoActionService.kt — Smart match + shifted target click
+# ==========================================================
+auto_action_code = r'''package com.aarishkhan.aarishai
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
@@ -600,3 +836,108 @@ class AutoActionService : AccessibilityService() {
         stopPlaybackInternal(showToast = false)
     }
 }
+'''
+
+with open(AAS, "w", encoding="utf-8") as f:
+    f.write(auto_action_code)
+
+print("✅ AutoActionService.kt upgraded")
+
+
+# ==========================================================
+# 3) FloatingControlService.kt — TouchCaptureView ko smart save
+# ==========================================================
+with open(FCS, "r", encoding="utf-8") as f:
+    fcs = f.read()
+
+old_save = r'''    private fun saveCurrentGesture() {
+        if (currentPoints.isEmpty()) return
+        val delayFromStart = currentGestureDownTime - recordingStartTime
+        recordedGestures.add(RecordedGesture(delayFromStart = delayFromStart, points = currentPoints.toList()))
+        currentPoints.clear()
+    }'''
+
+new_save = r'''    private fun saveCurrentGesture() {
+        if (currentPoints.isEmpty()) return
+
+        val delayFromStart = currentGestureDownTime - recordingStartTime
+        val firstP = currentPoints.first()
+
+        val metrics = resources.displayMetrics
+        val screenW = metrics.widthPixels.toFloat().coerceAtLeast(1f)
+        val screenH = metrics.heightPixels.toFloat().coerceAtLeast(1f)
+
+        val snapshot = AutoActionService.captureTargetSnapshot(
+            firstP.x.toInt(),
+            firstP.y.toInt(),
+            screenW,
+            screenH
+        )
+
+        recordedGestures.add(
+            RecordedGesture(
+                delayFromStart = delayFromStart,
+                points = currentPoints.toList(),
+
+                targetText = snapshot?.targetText,
+                targetDesc = snapshot?.targetDesc,
+                targetId = snapshot?.targetId,
+                targetClass = snapshot?.targetClass,
+
+                targetLeft = snapshot?.targetLeft ?: -1,
+                targetTop = snapshot?.targetTop ?: -1,
+                targetRight = snapshot?.targetRight ?: -1,
+                targetBottom = snapshot?.targetBottom ?: -1,
+
+                xPercent = snapshot?.xPercent ?: (firstP.x / screenW),
+                yPercent = snapshot?.yPercent ?: (firstP.y / screenH),
+
+                targetWPercent = snapshot?.targetWPercent ?: 0f,
+                targetHPercent = snapshot?.targetHPercent ?: 0f
+            )
+        )
+
+        currentPoints.clear()
+    }'''
+
+if old_save not in fcs:
+    raise SystemExit("❌ TouchCaptureView saveCurrentGesture block nahi mila.")
+fcs = fcs.replace(old_save, new_save)
+
+# Multi-page + ADD ke time fingerprint lost na ho
+fcs = fcs.replace(
+    "mutable.add(RecordedGesture(delayFromStart = g.delayFromStart + timeOffset, points = g.points))",
+    "mutable.add(g.copy(delayFromStart = g.delayFromStart + timeOffset))"
+)
+
+with open(FCS, "w", encoding="utf-8") as f:
+    f.write(fcs)
+
+print("✅ FloatingControlService.kt patched")
+
+
+# ==========================================================
+# 4) Accessibility config — screen content read ON
+# ==========================================================
+with open(ACC, "r", encoding="utf-8") as f:
+    acc = f.read()
+
+acc = acc.replace(
+    'android:canRetrieveWindowContent="false"',
+    'android:canRetrieveWindowContent="true"'
+)
+
+acc = re.sub(
+    r'android:accessibilityFlags="[^"]*"',
+    'android:accessibilityFlags="flagRequestFilterKeyEvents|flagReportViewIds|flagRetrieveInteractiveWindows"',
+    acc
+)
+
+with open(ACC, "w", encoding="utf-8") as f:
+    f.write(acc)
+
+print("✅ accessibility_service_config.xml fixed")
+
+print("")
+print("🎯 DONE: Level 1 Smart Target Fingerprint Engine applied.")
+print("⚠️ Important: Purani recording clear karke fresh recording banao, tabhi button fingerprint save hoga.")
