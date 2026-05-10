@@ -22,7 +22,9 @@ data class TargetSnapshot(
     val xPercent: Float = 0f,
     val yPercent: Float = 0f,
     val targetWPercent: Float = 0f,
-    val targetHPercent: Float = 0f
+    val targetHPercent: Float = 0f,
+    val insideXPercent: Float = 0.5f,
+    val insideYPercent: Float = 0.5f
 )
 
 data class RecordedGesture(
@@ -47,7 +49,9 @@ data class RecordedGesture(
 
     // Button size fingerprint
     val targetWPercent: Float = 0f,
-    val targetHPercent: Float = 0f
+    val targetHPercent: Float = 0f,
+    val insideXPercent: Float = 0.5f,
+    val insideYPercent: Float = 0.5f
 )
 
 object GestureStore {
@@ -79,6 +83,8 @@ object GestureStore {
             gestureObject.put("yPercent", gesture.yPercent.toDouble())
             gestureObject.put("targetWPercent", gesture.targetWPercent.toDouble())
             gestureObject.put("targetHPercent", gesture.targetHPercent.toDouble())
+            gestureObject.put("insideXPercent", gesture.insideXPercent.toDouble())
+            gestureObject.put("insideYPercent", gesture.insideYPercent.toDouble())
 
             val pointsArray = JSONArray()
             gesture.points.forEach { point ->
@@ -126,6 +132,8 @@ object GestureStore {
                 val yPercent = gestureObject.optDouble("yPercent", 0.0).toFloat()
                 val targetWPercent = gestureObject.optDouble("targetWPercent", 0.0).toFloat()
                 val targetHPercent = gestureObject.optDouble("targetHPercent", 0.0).toFloat()
+                val insideXPercent = gestureObject.optDouble("insideXPercent", 0.5).toFloat()
+                val insideYPercent = gestureObject.optDouble("insideYPercent", 0.5).toFloat()
 
                 val pointsArray = gestureObject.getJSONArray("points")
                 val points = mutableListOf<GesturePoint>()
@@ -156,7 +164,9 @@ object GestureStore {
                         xPercent = xPercent,
                         yPercent = yPercent,
                         targetWPercent = targetWPercent,
-                        targetHPercent = targetHPercent
+                        targetHPercent = targetHPercent,
+                        insideXPercent = insideXPercent,
+                        insideYPercent = insideYPercent
                     )
                 )
             }

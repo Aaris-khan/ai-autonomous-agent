@@ -233,14 +233,19 @@ class AutoActionService : AccessibilityService() {
             firstPoint.y
         }
 
-        val startX = match?.centerX ?: fallbackX
-        val startY = match?.centerY ?: fallbackY
+        val startX = if (match != null && match.bounds.width() > 0) {
+            match.bounds.left + (recordedGesture.insideXPercent.coerceIn(0f, 1f) * match.bounds.width())
+        } else fallbackX
+
+        val startY = if (match != null && match.bounds.height() > 0) {
+            match.bounds.top + (recordedGesture.insideYPercent.coerceIn(0f, 1f) * match.bounds.height())
+        } else fallbackY
 
         val movement = hasRealMovement(points)
         val duration = max(50L, points.last().t).coerceAtMost(60000L)
 
         // Normal tap ho aur strong node mil gaya ho, toh direct ACTION_CLICK try karo.
-        if (!movement && duration < 650L && match != null && match.score >= 80) {
+        if (!movement && duration < 650L && match != null && match.score >= 90 && match.bounds.width() < (resources.displayMetrics.widthPixels * 0.55f)) {
             val clickable = findClickableParent(match.node)
             if (clickable != null) {
                 val clicked = clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
@@ -265,7 +270,7 @@ class AutoActionService : AccessibilityService() {
     }
 
     private fun findBestSmartTarget(gesture: RecordedGesture): SmartMatch? {
-        val root = rootInActiveWindow ?: return null
+        val root = getRealAppRoot() ?: return null
 
         var best: SmartMatch? = null
 
@@ -320,14 +325,17 @@ class AutoActionService : AccessibilityService() {
             score += 90
         }
 
-        if (!gesture.targetText.isNullOrBlank() &&
+        val exactTextMatch =
+            !gesture.targetText.isNullOrBlank() &&
             nodeText?.equals(gesture.targetText, ignoreCase = true) == true
-        ) {
+
+        if (exactTextMatch) {
             score += 90
         }
 
         // Medium identity
-        if (!gesture.targetText.isNullOrBlank() &&
+        if (!exactTextMatch &&
+            !gesture.targetText.isNullOrBlank() &&
             nodeText?.contains(gesture.targetText, ignoreCase = true) == true
         ) {
             score += 45
@@ -366,8 +374,10 @@ class AutoActionService : AccessibilityService() {
             val dx = abs(cxP - gesture.xPercent)
             val dy = abs(cyP - gesture.yPercent)
 
-            if (dx < 0.12f && dy < 0.12f) score += 20
-            else if (dx < 0.22f && dy < 0.22f) score += 10
+            if (dx < 0.05f && dy < 0.05f) score += 60
+            else if (dx < 0.15f && dy < 0.15f) score += 30
+            else if (dx < 0.28f && dy < 0.28f) score += 10
+            else if (dx > 0.40f || dy > 0.40f) score -= 50
         }
 
         if (node.isClickable) score += 8
@@ -490,6 +500,33 @@ class AutoActionService : AccessibilityService() {
         }
     }
 
+
+    private fun getRealAppRoot(): AccessibilityNodeInfo? {
+        val myPackage = packageName
+
+        try {
+            for (window in windows) {
+                val root = window.root ?: continue
+                val pkg = root.packageName?.toString() ?: ""
+
+                // Apne AarishAI overlay/panel ko skip karo
+                if (pkg == myPackage) continue
+
+                val bounds = Rect()
+                root.getBoundsInScreen(bounds)
+
+                if (bounds.width() > 0 && bounds.height() > 0) {
+                    return root
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        val root = rootInActiveWindow ?: return null
+        val pkg = root.packageName?.toString() ?: ""
+        return if (pkg == myPackage) null else root
+    }
+
     // ==========================================================
     // 🔥 RECORDING TIME SNAPSHOT
     // ==========================================================
@@ -499,7 +536,7 @@ class AutoActionService : AccessibilityService() {
         screenW: Float,
         screenH: Float
     ): TargetSnapshot? {
-        val root = rootInActiveWindow ?: return null
+        val root = getRealAppRoot() ?: return null
         val touchedNode = findDeepestNodeAtCoordinate(root, x, y) ?: return null
 
         val clickNode = findClickableParent(touchedNode) ?: touchedNode
@@ -522,7 +559,9 @@ class AutoActionService : AccessibilityService() {
             xPercent = x / safeW,
             yPercent = y / safeH,
             targetWPercent = bounds.width() / safeW,
-            targetHPercent = bounds.height() / safeH
+            targetHPercent = bounds.height() / safeH,
+            insideXPercent = if (bounds.width() > 0) ((x - bounds.left).toFloat() / bounds.width()).coerceIn(0f, 1f) else 0.5f,
+            insideYPercent = if (bounds.height() > 0) ((y - bounds.top).toFloat() / bounds.height()).coerceIn(0f, 1f) else 0.5f
         )
     }
 

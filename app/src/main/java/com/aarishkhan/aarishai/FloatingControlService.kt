@@ -668,7 +668,9 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
                 yPercent = snapshot?.yPercent ?: (firstP.y / screenH),
 
                 targetWPercent = snapshot?.targetWPercent ?: 0f,
-                targetHPercent = snapshot?.targetHPercent ?: 0f
+                targetHPercent = snapshot?.targetHPercent ?: 0f,
+                insideXPercent = snapshot?.insideXPercent ?: 0.5f,
+                insideYPercent = snapshot?.insideYPercent ?: 0.5f
             )
         )
 
