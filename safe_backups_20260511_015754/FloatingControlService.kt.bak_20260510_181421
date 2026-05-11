@@ -39,14 +39,14 @@ class FloatingControlService : Service() {
 
     private var oldPanelX = 30
     private var oldPanelY = 120
-    private var panelHiddenForPlayback = false
 
     private lateinit var label: TextView
     private lateinit var btnStart: Button
+    private var btnSpeed: android.widget.Button? = null
+    private var btnSettings: android.widget.Button? = null
     private var btnClear: android.widget.Button? = null
     private lateinit var btnLoop: Button
     private lateinit var btnSave: Button
-    private lateinit var btnUndo: Button
     private lateinit var btnCut: Button
 
         private var isRecording = false
@@ -55,7 +55,6 @@ class FloatingControlService : Service() {
     private val handler = Handler(Looper.getMainLooper())
 
     private var playbackWatcherRunnable: Runnable? = null
-    private var activeConfigDialog: android.app.AlertDialog? = null
 
             override fun onCreate() {
         super.onCreate()
@@ -118,15 +117,10 @@ class FloatingControlService : Service() {
         }
 
         label = TextView(this).apply {
-            text = "📁 " + GestureStore.getActiveConfigName(this@FloatingControlService)
+            text = "AGENT"
             setTextColor(Color.WHITE)
             textSize = 15f
             setPadding(12, 0, 18, 0)
-            maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
-            maxWidth = (210 * resources.displayMetrics.density).toInt()
-            isClickable = true
-            setOnClickListener { showConfigManagerDialog() }
         }
 
         btnStart = Button(this).apply {
@@ -150,8 +144,6 @@ class FloatingControlService : Service() {
                     updateLoopButtonText(btnLoop)
                     btnLoop.visibility = View.GONE
                     btnSave.visibility = View.GONE
-                    btnClear?.visibility = View.GONE
-                    if (::btnUndo.isInitialized) btnUndo.visibility = View.GONE
                     Toast.makeText(
                         this@FloatingControlService,
                         "Old command clear ho gaya",
@@ -171,22 +163,10 @@ class FloatingControlService : Service() {
             visibility = if (GestureStore.hasRecording(this@FloatingControlService)) View.VISIBLE else View.GONE
         }
 
-        btnClear = Button(this).apply {
-            text = "CLR"
-            visibility = if (GestureStore.hasRecording(this@FloatingControlService)) View.VISIBLE else View.GONE
-            setOnClickListener { clearSavedRecordingFromPanel() }
-        }
-
                 btnSave = Button(this).apply {
             text = "SAVE"
             visibility = View.GONE
             setOnClickListener { saveRecording() }
-        }
-
-        btnUndo = Button(this).apply {
-            text = "UNDO"
-            visibility = if (GestureStore.hasRecording(this@FloatingControlService)) View.VISIBLE else View.GONE
-            setOnClickListener { undoLastStep() }
         }
 
         btnCut = Button(this).apply {
@@ -197,9 +177,7 @@ class FloatingControlService : Service() {
         root.addView(label)
         root.addView(btnStart)
         root.addView(btnLoop)
-        btnClear?.let { root.addView(it) }
         root.addView(btnSave)
-        root.addView(btnUndo)
         root.addView(btnCut)
 
         val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -282,10 +260,7 @@ class FloatingControlService : Service() {
     }
 
     private fun hidePanelUIForPlayback() {
-        if (panelHiddenForPlayback) return
-        panelHiddenForPlayback = true
         btnSave.visibility = View.GONE
-        btnUndo.visibility = View.GONE
         btnCut.visibility = View.GONE
         label.visibility = View.GONE
         btnLoop.visibility = View.GONE
@@ -311,13 +286,10 @@ class FloatingControlService : Service() {
     // BUG #5 FIX: btnLoop tabhi dikhega jab actually recording save ho
         // BUG FIX: Empty recording par SAVE hide rahega
     private fun restorePanelUI() {
-        panelHiddenForPlayback = false
         btnSave.visibility = if (unsavedGestures.isNotEmpty()) View.VISIBLE else View.GONE
-        btnUndo.visibility = if (hasAnythingToUndo()) View.VISIBLE else View.GONE
         btnCut.visibility = View.VISIBLE
         label.visibility = View.VISIBLE
         btnLoop.visibility = if (GestureStore.hasRecording(this)) View.VISIBLE else View.GONE
-        btnClear?.visibility = if (GestureStore.hasRecording(this) && unsavedGestures.isEmpty()) View.VISIBLE else View.GONE
 
         val params = panelParams
         val panel = panelView
@@ -350,17 +322,15 @@ class FloatingControlService : Service() {
         val firstAdded = safeAddView(panel, params, "Panel restore error")
         if (!firstAdded) {
             handler.postDelayed({
-                if (instance == this@FloatingControlService && panelView === panel) {
-                    val retryAdded = safeAddView(panel, params, "Panel retry error")
-                    if (!retryAdded) {
-                        panelView = null
-                        Toast.makeText(
-                            this,
-                            "Panel wapas nahi aa paya, service band kar rahe hain",
-                            Toast.LENGTH_LONG
-                        ).show()
-                        stopSelf()
-                    }
+                val retryAdded = safeAddView(panel, params, "Panel retry error")
+                if (!retryAdded) {
+                    panelView = null
+                    Toast.makeText(
+                        this,
+                        "Panel wapas nahi aa paya, service band kar rahe hain",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    stopSelf()
                 }
             }, 250L)
         }
@@ -370,168 +340,27 @@ class FloatingControlService : Service() {
 
     // BUG #4 FIX: Loop text update + visibility correctly set on save
      
-            
-    private fun refreshConfigLabel() {
-        if (::label.isInitialized) {
-            label.text = "📁 " + GestureStore.getActiveConfigName(this)
-        }
-    }
-
-    private fun prepareOverlayDialog(dialog: android.app.AlertDialog) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
-        } else {
-            @Suppress("DEPRECATION")
-            dialog.window?.setType(WindowManager.LayoutParams.TYPE_PHONE)
-        }
-    }
-
-    private fun showOverlayDialogSafely(dialog: android.app.AlertDialog) {
-        try {
-            closeSettingsPanel()
-            activeConfigDialog = dialog
-            dialog.setOnDismissListener {
-                if (activeConfigDialog === dialog) {
-                    activeConfigDialog = null
-                }
-            }
-            prepareOverlayDialog(dialog)
-            dialog.show()
-        } catch (e: Exception) {
-            activeConfigDialog = null
-            Toast.makeText(this, "Config popup open nahi hua: ${e.message}", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun showConfigManagerDialog() {
-        if (isRecording || AutoActionService.isPlaying() || unsavedGestures.isNotEmpty()) {
-            Toast.makeText(this, "Recording/Play/Unsaved edit ke time config change nahi kar sakte", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val savedConfigs = GestureStore.getAllConfigNames(this).toMutableList()
-        val items = (savedConfigs + "➕ Create New Config").toTypedArray()
-
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("Macro Configs")
-            .setItems(items) { _, which ->
-                if (which == savedConfigs.size) {
-                    showCreateConfigDialog()
-                } else {
-                    val selected = savedConfigs[which]
-                    GestureStore.setActiveConfigName(this, selected)
-                    refreshConfigLabel()
-                    if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
-
-                    unsavedGestures = emptyList()
-                    glassHiddenAt = 0L
-                    nextNavigationGapOverride = null
-                    pendingDiscardConfirm = false
-
-                    val hasOld = GestureStore.hasRecording(this)
-                    updateUIState(if (hasOld) "PLAY" else "START", false, hasOld, true)
-                    restorePanelUI()
-
-                    Toast.makeText(this, "Switched: $selected", Toast.LENGTH_SHORT).show()
-                }
-            }
-            .setNeutralButton("Delete Active Config") { _, _ ->
-                val current = GestureStore.getActiveConfigName(this)
-                val deleted = GestureStore.deleteConfig(this, current)
-                unsavedGestures = emptyList()
-                glassHiddenAt = 0L
-                nextNavigationGapOverride = null
-                pendingDiscardConfirm = false
-                refreshConfigLabel()
-                if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
-                val hasOld = GestureStore.hasRecording(this)
-                updateUIState(if (hasOld) "PLAY" else "START", false, hasOld, true)
-                restorePanelUI()
-                Toast.makeText(
-                    this,
-                    if (deleted) "Deleted: $current" else "Default Config delete nahi ho sakta",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-            .create()
-
-        showOverlayDialogSafely(dialog)
-    }
-
-    private fun showCreateConfigDialog() {
-        if (isRecording || AutoActionService.isPlaying() || unsavedGestures.isNotEmpty()) {
-            Toast.makeText(this, "Pehle current recording/save complete karo", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val input = android.widget.EditText(this).apply {
-            hint = "New Config Name"
-            setSingleLine(true)
-        }
-
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("Create Config Block")
-            .setView(input)
-            .setPositiveButton("Create") { _, _ ->
-                val name = input.text?.toString()
-                    ?.replace(Regex("[\\r\\n\\t]+"), " ")
-                    ?.replace(Regex("\\s+"), " ")
-                    ?.trim()
-                    ?.take(40)
-                    .orEmpty()
-
-                if (name.isBlank()) {
-                    Toast.makeText(this, "Config name empty nahi ho sakta", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-
-                GestureStore.setActiveConfigName(this, name)
-                refreshConfigLabel()
-                if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
-
-                unsavedGestures = emptyList()
-                glassHiddenAt = 0L
-                nextNavigationGapOverride = null
-                pendingDiscardConfirm = false
-
-                updateUIState("START", false, false, true)
-                restorePanelUI()
-
-                Toast.makeText(this, "Created: $name", Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("Cancel", null)
-            .create()
-
-        showOverlayDialogSafely(dialog)
-    }
-
-
-    private fun stopEverythingAndClose() {
-        val liveGestures = if (isRecording) captureView?.getRecordedGestures().orEmpty() else emptyList()
-        val hasLiveRecording = liveGestures.isNotEmpty()
+        private fun stopEverythingAndClose() {
+        val hasLiveRecording = isRecording && ((captureView as? TouchCaptureView)?.getRecordedGestures()?.isNotEmpty() == true)
 
         if ((unsavedGestures.isNotEmpty() || hasLiveRecording) && !pendingDiscardConfirm) {
             pendingDiscardConfirm = true
             Toast.makeText(this, "Unsaved recording hai! Discard karne ke liye dobara CUT dabao.", Toast.LENGTH_LONG).show()
-            handler.postDelayed({ pendingDiscardConfirm = false }, 5000L)
+            handler.postDelayed({ pendingDiscardConfirm = false }, 5000)
             return
         }
-
         pendingDiscardConfirm = false
-        glassHiddenAt = 0L
-        nextNavigationGapOverride = null
         unsavedGestures = emptyList()
-        isRecording = false
-        playbackWatcherRunnable?.let { handler.removeCallbacks(it) }
-        playbackWatcherRunnable = null
-        safeRemoveView(captureView)
-        captureView = null
+        if (isRecording) {
+            isRecording = false
+            safeRemoveView(captureView)
+            captureView = null
+        }
         if (AutoActionService.isPlaying()) AutoActionService.stopPlayback(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
+            @Suppress("DEPRECATION") stopForeground(true)
         }
         stopSelf()
     }
@@ -582,15 +411,7 @@ class FloatingControlService : Service() {
                     true
                 }
 
-                MotionEvent.ACTION_UP -> {
-                    if (!isDragging) {
-                        dragHandle.performClick()
-                    }
-                    isDragging = false
-                    true
-                }
-
-                MotionEvent.ACTION_CANCEL -> {
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     isDragging = false
                     true
                 }
@@ -635,20 +456,13 @@ class FloatingControlService : Service() {
         val msg = if (actionType == 1) { "🔙 BACK recorded" } else { "🗂️ RECENTS recorded" }
         android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
     }
-        override fun onDestroy() {
+    override fun onDestroy() {
         playbackWatcherRunnable?.let { handler.removeCallbacks(it) }
-        playbackWatcherRunnable = null
-        closeSettingsPanel()
         handler.removeCallbacksAndMessages(null)
-        isRecording = false
-        pendingDiscardConfirm = false
-        glassHiddenAt = 0L
-        nextNavigationGapOverride = null
         safeRemoveView(captureView)
         safeRemoveView(panelView)
         captureView = null
         panelView = null
-        if (AutoActionService.isPlaying()) AutoActionService.stopPlayback(this)
         if (instance == this) instance = null
         super.onDestroy()
     }
@@ -661,110 +475,82 @@ class FloatingControlService : Service() {
 
 
     private var glassHiddenAt = 0L
-    private var nextNavigationGapOverride: Long? = null
 
     // ✅ SAFE UI STATE FIX: Default parameter added to prevent compile errors
-    private fun closeSettingsPanel() {
-        try {
-            activeConfigDialog?.dismiss()
-        } catch (_: Exception) {
-        }
-        activeConfigDialog = null
-    }
+    private fun closeSettingsPanel() {}
 
-
-    private fun hasAnythingToUndo(): Boolean {
-        if (AutoActionService.isPlaying()) return false
-        if (isRecording && captureView?.hasRecordedSomething() == true) return true
-        if (unsavedGestures.isNotEmpty()) return true
-        return GestureStore.hasRecording(this)
-    }
-
-        private fun updateUIState(startText: String, showSave: Boolean, showOthers: Boolean, showCut: Boolean = true) {
-        if (::btnStart.isInitialized) btnStart.text = startText
-        if (::btnSave.isInitialized) btnSave.visibility = if (showSave) View.VISIBLE else View.GONE
-        if (::btnUndo.isInitialized) {
-            btnUndo.visibility = if (hasAnythingToUndo()) View.VISIBLE else View.GONE
-        }
-        if (::btnLoop.isInitialized) btnLoop.visibility = if (showOthers && GestureStore.hasRecording(this)) View.VISIBLE else View.GONE
-        if (::btnCut.isInitialized) btnCut.visibility = if (showCut) View.VISIBLE else View.GONE
-        btnClear?.visibility = if (showOthers && GestureStore.hasRecording(this) && unsavedGestures.isEmpty()) View.VISIBLE else View.GONE
-        // btnSettings/btnSpeed removed from UI for now.
+    private fun updateUIState(startText: String, showSave: Boolean, showOthers: Boolean, showCut: Boolean = true) {
+        btnStart.text = startText
+        val sVis = if (showSave) android.view.View.VISIBLE else android.view.View.GONE
+        val oVis = if (showOthers) android.view.View.VISIBLE else android.view.View.GONE
+        val cVis = if (showCut) android.view.View.VISIBLE else android.view.View.GONE
+        
+        try { btnSave?.visibility = sVis } catch(e:Exception){}
+        try { btnClear?.visibility = oVis } catch(e:Exception){}
+        try { btnSettings?.visibility = oVis } catch(e:Exception){}
+        try { btnLoop?.visibility = oVis } catch(e:Exception){}
+        try { btnSpeed?.visibility = oVis } catch(e:Exception){}
+        try { btnCut?.visibility = cVis } catch(e:Exception){}
     }
 
     // ✅ EXACT NAVIGATION GAP FIX
-        private fun extractAndAppendGestures() {
-        val view = captureView ?: return
+    private fun extractAndAppendGestures() {
+        val view = captureView as? TouchCaptureView ?: return
         val newGestures = view.getRecordedGestures()
-            .filter { it.points.isNotEmpty() }
-            .sortedBy { it.delayFromStart }
-
+        
         if (newGestures.isEmpty()) return
-
+        
+        val mutable = unsavedGestures.toMutableList()
         val lastGestureEnd = unsavedGestures.maxOfOrNull { g ->
-            g.delayFromStart.coerceAtLeast(0L) + (g.points.lastOrNull()?.t ?: 0L).coerceAtLeast(0L)
+            g.delayFromStart + (g.points.lastOrNull()?.t ?: 0L)
         } ?: 0L
-
-        val overrideGap = nextNavigationGapOverride
-        val navigationGap = if (unsavedGestures.isNotEmpty()) {
-            (overrideGap ?: if (glassHiddenAt > 0L) {
-                view.getRecordingStartTime() - glassHiddenAt
-            } else {
-                0L
-            }).coerceAtLeast(0L).coerceAtMost(120000L)
+        
+        // Asli Navigation Gap: Naye Glass ke start time mein se Purane HIDE time ko minus karo
+        val navigationGap = if (unsavedGestures.isNotEmpty() && glassHiddenAt > 0L) {
+            val gap = view.getRecordingStartTime() - glassHiddenAt
+            if (gap > 0L) gap else 0L
         } else {
             0L
         }
-        nextNavigationGapOverride = null
-
-        val timeOffset = if (unsavedGestures.isEmpty()) 0L else lastGestureEnd + navigationGap
-        unsavedGestures = (unsavedGestures + newGestures.map { g ->
-            g.copy(delayFromStart = (g.delayFromStart + timeOffset).coerceAtLeast(0L))
-        }).sortedBy { it.delayFromStart }
+        
+        val timeOffset = if (unsavedGestures.isEmpty()) {
+            0L
+        } else {
+            lastGestureEnd + navigationGap
+        }
+        
+        newGestures.forEach { g -> 
+            mutable.add(g.copy(delayFromStart = g.delayFromStart + timeOffset))
+        }
+        
+        unsavedGestures = mutable
     }
 
-        private fun handleStartButton() {
-        pendingDiscardConfirm = false
-
+    private fun handleStartButton() {
         if (AutoActionService.isPlaying()) {
             AutoActionService.stopPlayback(this)
-            playbackWatcherRunnable?.let { handler.removeCallbacks(it) }
-            playbackWatcherRunnable = null
             updateUIState("PLAY", false, true, true)
             restorePanelUI()
-            Toast.makeText(this, "Playback stopped", Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(this, "Playback stopped", android.widget.Toast.LENGTH_SHORT).show()
             return
         }
 
         if (isRecording) {
+            // ✅ ORDER FIXED: Pehle extract karo, fir glass hatao, aur fir HIDE time save karo
             extractAndAppendGestures()
             isRecording = false
             safeRemoveView(captureView)
             captureView = null
-            glassHiddenAt = android.os.SystemClock.uptimeMillis()
-            nextNavigationGapOverride = null
-
-            val hasOld = GestureStore.hasRecording(this)
-            val hasUnsaved = unsavedGestures.isNotEmpty()
-            val nextText = if (hasUnsaved) "+ ADD" else if (hasOld) "PLAY" else "START"
-
-            updateUIState(nextText, hasUnsaved, hasOld, true)
-
-            if (hasUnsaved) {
-                Toast.makeText(this, "Glass hat gaya! Naya page kholo aur + ADD dabao.", Toast.LENGTH_LONG).show()
-            } else {
-                Toast.makeText(this, "Koi step record nahi hua", Toast.LENGTH_SHORT).show()
-            }
-            return
-        }
-
-        if (unsavedGestures.isNotEmpty()) {
+            
+            glassHiddenAt = android.os.SystemClock.uptimeMillis() // ACTUAL WAIT YAHAN SE START HOGA
+            
+            updateUIState("+ ADD", unsavedGestures.isNotEmpty(), false, true)
+            android.widget.Toast.makeText(this, "Glass hat gaya! Naya page kholo aur + ADD dabao.", android.widget.Toast.LENGTH_LONG).show()
+            
+        } else if (unsavedGestures.isNotEmpty()) {
             startRecording()
-            return
-        }
-
-        if (GestureStore.hasRecording(this)) {
-            try { closeSettingsPanel() } catch (_: Exception) {}
+        } else if (GestureStore.hasRecording(this)) {
+            try { closeSettingsPanel() } catch(e: Exception) {}
             val started = AutoActionService.playNow(this)
             if (started) {
                 updateUIState("STOP", false, false, false)
@@ -774,43 +560,33 @@ class FloatingControlService : Service() {
                 updateUIState("PLAY", false, true, true)
                 restorePanelUI()
             }
-            return
+        } else {
+            unsavedGestures = emptyList()
+            startRecording()
         }
-
-        unsavedGestures = emptyList()
-        glassHiddenAt = 0L
-        nextNavigationGapOverride = null
-        startRecording()
     }
 
-        private fun startRecording() {
-        try { closeSettingsPanel() } catch (_: Exception) {}
-
-        if (isRecording) return
-        safeRemoveView(captureView)
-        captureView = null
-        pendingDiscardConfirm = false
+    private fun startRecording() {
+        try { closeSettingsPanel() } catch (e: Exception) {}
         updateUIState("HIDE", true, false, true)
 
         val touchLayer = TouchCaptureView(this)
-        val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        val overlayType = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
-            @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
+            android.view.WindowManager.LayoutParams.TYPE_PHONE
         }
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
+        val params = android.view.WindowManager.LayoutParams(
+            android.view.WindowManager.LayoutParams.MATCH_PARENT,
+            android.view.WindowManager.LayoutParams.MATCH_PARENT,
             overlayType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
+            android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or android.view.WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            android.graphics.PixelFormat.TRANSLUCENT
         )
-        params.gravity = Gravity.TOP or Gravity.START
+        params.gravity = android.view.Gravity.TOP or android.view.Gravity.START
 
         if (!safeAddView(touchLayer, params, "Recording layer error")) {
             isRecording = false
-            captureView = null
             val hasOld = GestureStore.hasRecording(this)
             updateUIState(if (unsavedGestures.isNotEmpty()) "+ ADD" else if (hasOld) "PLAY" else "START", unsavedGestures.isNotEmpty(), hasOld, true)
             return
@@ -819,147 +595,60 @@ class FloatingControlService : Service() {
         captureView = touchLayer
         isRecording = true
         bringPanelToFront()
-        Toast.makeText(this, "🟢 Glass ON! Wait aur Tap record honge.", Toast.LENGTH_SHORT).show()
+        android.widget.Toast.makeText(this, "🟢 Glass ON! Wait aur Tap record honge.", android.widget.Toast.LENGTH_SHORT).show()
     }
 
-
-    private fun undoLastStep() {
-        if (AutoActionService.isPlaying()) {
-            Toast.makeText(this, "Pehle playback STOP/complete hone do", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        // Case 1: Glass ON hai, live recording ke andar last tap delete karo
+    private fun saveRecording() {
         if (isRecording) {
-            val removed = captureView?.removeLastGesture() == true
-            if (removed) {
-                Toast.makeText(this, "↩️ Last live step delete ho gaya", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(this, "Undo ke liye abhi koi live step nahi hai", Toast.LENGTH_SHORT).show()
-            }
-            updateUIState("HIDE", true, false, true)
-            return
-        }
-
-        // Case 2: SAVE se pehle unsaved buffer ke andar last step delete karo
-        if (unsavedGestures.isNotEmpty()) {
-            val sortedUnsaved = unsavedGestures.sortedBy { it.delayFromStart }
-            val removedGesture = sortedUnsaved.lastOrNull()
-            val remainingGestures = sortedUnsaved.dropLast(1)
-            val previousEnd = remainingGestures.maxOfOrNull { g ->
-                g.delayFromStart.coerceAtLeast(0L) + (g.points.lastOrNull()?.t ?: 0L).coerceAtLeast(0L)
-            } ?: 0L
-            val preservedGap = ((removedGesture?.delayFromStart ?: previousEnd) - previousEnd)
-                .coerceAtLeast(0L)
-                .coerceAtMost(120000L)
-
-            unsavedGestures = remainingGestures
-
-            if (unsavedGestures.isEmpty()) {
-                glassHiddenAt = 0L
-                nextNavigationGapOverride = null
-            } else {
-                glassHiddenAt = android.os.SystemClock.uptimeMillis()
-                nextNavigationGapOverride = preservedGap
-            }
-
-            val hasOld = GestureStore.hasRecording(this)
-            val nextText = if (unsavedGestures.isNotEmpty()) "+ ADD" else if (hasOld) "PLAY" else "START"
-
-            updateUIState(nextText, unsavedGestures.isNotEmpty(), hasOld, true)
-            restorePanelUI()
-            Toast.makeText(this, "↩️ Last unsaved step delete ho gaya", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        // Case 3: SAVE + PLAY ke baad bhi saved memory se last step delete karo
-        val savedGestures = GestureStore.load(this).sortedBy { it.delayFromStart }
-
-        if (savedGestures.isNotEmpty()) {
-            val edited = savedGestures.dropLast(1)
-
-            if (edited.isEmpty()) {
-                GestureStore.clear(this)
-                unsavedGestures = emptyList()
-                glassHiddenAt = 0L
-                nextNavigationGapOverride = null
-                updateUIState("START", false, false, true)
-                restorePanelUI()
-                Toast.makeText(this, "↩️ Last step delete hua. Ab memory empty hai.", Toast.LENGTH_SHORT).show()
-                return
-            }
-
-            val ok = GestureStore.save(this, edited)
-            if (!ok) {
-                Toast.makeText(this, "❌ Undo save nahi ho paya", Toast.LENGTH_LONG).show()
-                return
-            }
-
-            unsavedGestures = emptyList()
-            glassHiddenAt = 0L
-            nextNavigationGapOverride = null
-
-            updateUIState("PLAY", false, true, true)
-            restorePanelUI()
-            Toast.makeText(this, "↩️ Saved memory ka last step delete ho gaya.", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        Toast.makeText(this, "Undo karne ke liye kuch nahi hai", Toast.LENGTH_SHORT).show()
-    }
-
-        private fun saveRecording() {
-        if (isRecording) {
-            val liveView = captureView
-            if (liveView != null) {
-                extractAndAppendGestures()
-                safeRemoveView(liveView)
-            } else {
-                Toast.makeText(this, "⚠️ Recording layer missing thi. Jo saved buffer hai wahi save hoga.", Toast.LENGTH_LONG).show()
-            }
+            extractAndAppendGestures()
             isRecording = false
+            safeRemoveView(captureView)
             captureView = null
         }
-
-        glassHiddenAt = 0L
-        nextNavigationGapOverride = null
-        pendingDiscardConfirm = false
-
+        
+        glassHiddenAt = 0L // ✅ RESET FIX
+        
         if (unsavedGestures.isEmpty()) {
-            updateUIState(if (GestureStore.hasRecording(this)) "PLAY" else "START", false, GestureStore.hasRecording(this), true)
-            Toast.makeText(this, "Koi recording nahi mili", Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(this, "Koi recording nahi mili", android.widget.Toast.LENGTH_SHORT).show()
             return
         }
-
-        val cleanGestures = unsavedGestures
-            .filter { it.points.isNotEmpty() }
-            .sortedBy { it.delayFromStart }
-
-        val saved = GestureStore.save(this, cleanGestures)
+        val saved = GestureStore.save(this, unsavedGestures)
         if (!saved) {
-            Toast.makeText(this, "❌ Memory save fail ho gayi, dobara SAVE dabao", Toast.LENGTH_LONG).show()
-            updateUIState("+ ADD", cleanGestures.isNotEmpty(), false, true)
+            android.widget.Toast.makeText(this, "❌ Memory save fail ho gayi, dobara SAVE dabao", android.widget.Toast.LENGTH_LONG).show()
+            updateUIState("+ ADD", unsavedGestures.isNotEmpty(), false, true)
             return
         }
 
         unsavedGestures = emptyList()
         updateUIState("PLAY", false, true, true)
-        restorePanelUI()
-        Toast.makeText(this, "✅ Poori Memory Save ho gayi!", Toast.LENGTH_SHORT).show()
+        android.widget.Toast.makeText(this, "✅ Poori Memory Save ho gayi!", android.widget.Toast.LENGTH_SHORT).show()
     }
-private fun clearSavedRecordingFromPanel() {
-        if (isRecording || AutoActionService.isPlaying() || unsavedGestures.isNotEmpty()) {
-            Toast.makeText(this, "Abhi saaf nahi kar sakte", Toast.LENGTH_SHORT).show()
+
+    private fun stopRecording() {
+        isRecording = false
+        safeRemoveView(captureView)
+        captureView = null
+        glassHiddenAt = 0L // ✅ RESET FIX
+        
+        if (unsavedGestures.isNotEmpty()) {
+            android.widget.Toast.makeText(this, "⚠️ Unsaved multi-page steps cancel ho gaye", android.widget.Toast.LENGTH_SHORT).show()
+        }
+        unsavedGestures = emptyList()
+        val hasOld = GestureStore.hasRecording(this)
+        updateUIState(if (hasOld) "PLAY" else "START", false, hasOld, true)
+    }
+
+    private fun clearSavedRecordingFromPanel() {
+        if (isRecording || AutoActionService.isPlaying()) {
+            android.widget.Toast.makeText(this, "Abhi saaf nahi kar sakte", android.widget.Toast.LENGTH_SHORT).show()
             return
         }
         GestureStore.clear(this)
         unsavedGestures = emptyList()
-        glassHiddenAt = 0L
-        nextNavigationGapOverride = null
-        pendingDiscardConfirm = false
+        glassHiddenAt = 0L // ✅ RESET FIX
+        
         updateUIState("START", false, false, true)
-        restorePanelUI()
-        Toast.makeText(this, "🗑️ Purani memory clear ho gayi!", Toast.LENGTH_SHORT).show()
+        android.widget.Toast.makeText(this, "🗑️ Purani memory clear ho gayi!", android.widget.Toast.LENGTH_SHORT).show()
     }
 
 }
@@ -975,7 +664,6 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
     private val recordingStartTime = android.os.SystemClock.uptimeMillis()
     private var currentGestureDownTime = 0L
     private var currentSnapshot: TargetSnapshot? = null
-    private var multiTouchCanceled = false
 
     init {
         isClickable = true
@@ -989,24 +677,8 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
 
     override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
         // Multi-touch/pinch/two-finger accidental input ko record mat karo.
-        // ACTION_POINTER_DOWN ke baad final ACTION_UP ko bhi block karo,
-        // warna ek ghost tap save ho sakta hai.
-        if (event.pointerCount > 1 ||
-            event.actionMasked == android.view.MotionEvent.ACTION_POINTER_DOWN ||
-            event.actionMasked == android.view.MotionEvent.ACTION_POINTER_UP
-        ) {
-            currentPoints.clear()
-            currentSnapshot = null
-            multiTouchCanceled = true
-            return true
-        }
-
-        if (multiTouchCanceled) {
-            if (event.actionMasked == android.view.MotionEvent.ACTION_UP ||
-                event.actionMasked == android.view.MotionEvent.ACTION_CANCEL
-            ) {
-                multiTouchCanceled = false
-            }
+        // Isse corrupt timestamps aur wrong path save hone se bachenge.
+        if (event.pointerCount > 1) {
             currentPoints.clear()
             currentSnapshot = null
             return true
@@ -1036,12 +708,12 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
         return true
     }
 
-        private fun addPoint(event: android.view.MotionEvent, forceAdd: Boolean = false) {
-        val relativeTime = (event.eventTime - currentGestureDownTime).coerceAtLeast(0L).coerceAtMost(60000L)
+    private fun addPoint(event: android.view.MotionEvent, forceAdd: Boolean = false) {
+        val relativeTime = event.eventTime - currentGestureDownTime
         if (currentPoints.isNotEmpty() && !forceAdd) {
             val last = currentPoints.last()
             val samePlace = kotlin.math.abs(last.x - event.rawX) < 2f && kotlin.math.abs(last.y - event.rawY) < 2f
-            val tooFast = relativeTime - last.t < 12L
+            val tooFast = relativeTime - last.t < 12
             if (samePlace && tooFast) return
         }
         currentPoints.add(GesturePoint(x = event.rawX, y = event.rawY, t = relativeTime))
@@ -1060,10 +732,10 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
         )
     }
 
-        private fun saveCurrentGesture() {
+    private fun saveCurrentGesture() {
         if (currentPoints.isEmpty()) return
 
-        val delayFromStart = (currentGestureDownTime - recordingStartTime).coerceAtLeast(0L)
+        val delayFromStart = currentGestureDownTime - recordingStartTime
         val firstP = currentPoints.first()
 
         val metrics = resources.displayMetrics
@@ -1078,28 +750,31 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
         recordedGestures.add(
             RecordedGesture(
                 delayFromStart = delayFromStart,
-                points = currentPoints.sortedBy { it.t }.toList(),
+                points = currentPoints.toList(),
+
                 targetText = snapshot?.targetText,
                 targetDesc = snapshot?.targetDesc,
                 targetId = snapshot?.targetId,
                 targetClass = snapshot?.targetClass,
+
                 targetContextText = snapshot?.targetContextText,
                 targetChildText = snapshot?.targetChildText,
                 targetSiblingText = snapshot?.targetSiblingText,
                 targetRoleFlags = snapshot?.targetRoleFlags,
                 targetTreePath = snapshot?.targetTreePath,
+
                 targetLeft = snapshot?.targetLeft ?: -1,
                 targetTop = snapshot?.targetTop ?: -1,
                 targetRight = snapshot?.targetRight ?: -1,
                 targetBottom = snapshot?.targetBottom ?: -1,
-                xPercent = snapshot?.xPercent ?: (firstP.x / screenW).coerceIn(0f, 1f),
-                yPercent = snapshot?.yPercent ?: (firstP.y / screenH).coerceIn(0f, 1f),
+
+                xPercent = snapshot?.xPercent ?: (firstP.x / screenW),
+                yPercent = snapshot?.yPercent ?: (firstP.y / screenH),
+
                 targetWPercent = snapshot?.targetWPercent ?: 0f,
                 targetHPercent = snapshot?.targetHPercent ?: 0f,
                 insideXPercent = snapshot?.insideXPercent ?: 0.5f,
-                insideYPercent = snapshot?.insideYPercent ?: 0.5f,
-                recordedScreenW = snapshot?.recordedScreenW ?: metrics.widthPixels,
-                recordedScreenH = snapshot?.recordedScreenH ?: metrics.heightPixels
+                insideYPercent = snapshot?.insideYPercent ?: 0.5f
             )
         )
 
@@ -1108,38 +783,14 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
     }
 
 
-        fun addSystemGesture(actionType: Int) {
-        val dummyCoord = when (actionType) {
-            1 -> -100f
-            2 -> -200f
-            else -> return
-        }
+    fun addSystemGesture(actionType: Int) {
+        val dummyCoord = if (actionType == 1) -100f else -200f
         val delay = (android.os.SystemClock.uptimeMillis() - recordingStartTime).coerceAtLeast(0L)
         val points = listOf(GesturePoint(dummyCoord, dummyCoord, 100L))
         recordedGestures.add(
             RecordedGesture(delayFromStart = delay, points = points)
         )
     }
-    fun hasRecordedSomething(): Boolean {
-        return currentPoints.isNotEmpty() || recordedGestures.isNotEmpty()
-    }
-
-    fun removeLastGesture(): Boolean {
-        if (currentPoints.isNotEmpty()) {
-            currentPoints.clear()
-            currentSnapshot = null
-            return true
-        }
-
-        if (recordedGestures.isNotEmpty()) {
-            recordedGestures.removeAt(recordedGestures.lastIndex)
-            currentSnapshot = null
-            return true
-        }
-
-        return false
-    }
-
     fun getRecordedGestures(): List<RecordedGesture> {
         return recordedGestures.sortedBy { it.delayFromStart }
     }

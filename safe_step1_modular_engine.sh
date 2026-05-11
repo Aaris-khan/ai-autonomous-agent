@@ -1,66 +1,38 @@
-package com.aarishkhan.aarishai
+#!/usr/bin/env bash
+set -euo pipefail
 
-import android.content.Context
-import org.json.JSONArray
-import org.json.JSONObject
+GS="app/src/main/java/com/aarishkhan/aarishai/GestureStore.kt"
+FCS="app/src/main/java/com/aarishkhan/aarishai/FloatingControlService.kt"
 
-data class GesturePoint(
-    val x: Float,
-    val y: Float,
-    val t: Long
-)
+[ -f "$GS" ] || { echo "❌ File nahi mili: $GS"; exit 1; }
+[ -f "$FCS" ] || { echo "❌ File nahi mili: $FCS"; exit 1; }
 
-data class TargetSnapshot(
-    val targetText: String? = null,
-    val targetDesc: String? = null,
-    val targetId: String? = null,
-    val targetClass: String? = null,
-    val targetContextText: String? = null,
-    val targetChildText: String? = null,
-    val targetSiblingText: String? = null,
-    val targetRoleFlags: String? = null,
-    val targetTreePath: String? = null,
-    val targetLeft: Int = -1,
-    val targetTop: Int = -1,
-    val targetRight: Int = -1,
-    val targetBottom: Int = -1,
-    val xPercent: Float = 0f,
-    val yPercent: Float = 0f,
-    val targetWPercent: Float = 0f,
-    val targetHPercent: Float = 0f,
-    val insideXPercent: Float = 0.5f,
-    val insideYPercent: Float = 0.5f,
-    val recordedScreenW: Int = 0,
-    val recordedScreenH: Int = 0
-)
+cp "$GS" "$GS.bak_modular_$(date +%Y%m%d_%H%M%S)"
+cp "$FCS" "$FCS.bak_modular_$(date +%Y%m%d_%H%M%S)"
 
-data class RecordedGesture(
-    val delayFromStart: Long,
-    val points: List<GesturePoint>,
-    val targetText: String? = null,
-    val targetDesc: String? = null,
-    val targetId: String? = null,
-    val targetClass: String? = null,
-    val targetContextText: String? = null,
-    val targetChildText: String? = null,
-    val targetSiblingText: String? = null,
-    val targetRoleFlags: String? = null,
-    val targetTreePath: String? = null,
-    val targetLeft: Int = -1,
-    val targetTop: Int = -1,
-    val targetRight: Int = -1,
-    val targetBottom: Int = -1,
-    val xPercent: Float = 0f,
-    val yPercent: Float = 0f,
-    val targetWPercent: Float = 0f,
-    val targetHPercent: Float = 0f,
-    val insideXPercent: Float = 0.5f,
-    val insideYPercent: Float = 0.5f,
-    val recordedScreenW: Int = 0,
-    val recordedScreenH: Int = 0
-)
+python3 << 'PY'
+from pathlib import Path
+import re
+import sys
 
-object GestureStore {
+GS = Path("app/src/main/java/com/aarishkhan/aarishai/GestureStore.kt")
+FCS = Path("app/src/main/java/com/aarishkhan/aarishai/FloatingControlService.kt")
+
+gs = GS.read_text(encoding="utf-8")
+fcs = FCS.read_text(encoding="utf-8")
+
+def fail(msg):
+    print("❌ " + msg)
+    sys.exit(1)
+
+# ==========================================================
+# 1) GestureStore: safe multi-config vault with migration
+# ==========================================================
+m = re.search(r'object\s+GestureStore\s*\{', gs)
+if not m:
+    fail("GestureStore object nahi mila")
+
+gesture_store_v2 = r'''object GestureStore {
     private const val PREF_NAME = "screen_command_store"
 
     // Old key ko rakho, taaki purani saved recording gayab na ho.
@@ -81,7 +53,6 @@ object GestureStore {
         val cleaned = (name ?: DEFAULT_CONFIG)
             .replace(Regex("[\\r\\n\\t]+"), " ")
             .replace(Regex("\\s+"), " ")
-            .replace(Regex("[^\\p{L}\\p{N} _.-]+"), "")
             .trim()
             .take(40)
 
@@ -195,8 +166,6 @@ object GestureStore {
             gestureObject.put("targetHPercent", gesture.targetHPercent.coerceIn(0f, 1f).toDouble())
             gestureObject.put("insideXPercent", gesture.insideXPercent.coerceIn(0f, 1f).toDouble())
             gestureObject.put("insideYPercent", gesture.insideYPercent.coerceIn(0f, 1f).toDouble())
-            gestureObject.put("recordedScreenW", gesture.recordedScreenW.coerceAtLeast(0))
-            gestureObject.put("recordedScreenH", gesture.recordedScreenH.coerceAtLeast(0))
 
             val pointsArray = JSONArray()
             gesture.points
@@ -276,9 +245,7 @@ object GestureStore {
                         targetWPercent = gestureObject.optDouble("targetWPercent", 0.0).toFloat().coerceIn(0f, 1f),
                         targetHPercent = gestureObject.optDouble("targetHPercent", 0.0).toFloat().coerceIn(0f, 1f),
                         insideXPercent = gestureObject.optDouble("insideXPercent", 0.5).toFloat().coerceIn(0f, 1f),
-                        insideYPercent = gestureObject.optDouble("insideYPercent", 0.5).toFloat().coerceIn(0f, 1f),
-                        recordedScreenW = gestureObject.optInt("recordedScreenW", 0).coerceAtLeast(0),
-                        recordedScreenH = gestureObject.optInt("recordedScreenH", 0).coerceAtLeast(0)
+                        insideYPercent = gestureObject.optDouble("insideYPercent", 0.5).toFloat().coerceIn(0f, 1f)
                     )
                 )
             }
@@ -306,46 +273,17 @@ object GestureStore {
         } ?: 0L
     }
 
-
-    fun deleteConfig(context: Context, name: String): Boolean {
-        val safeName = normalizeConfigName(name)
-        if (safeName == DEFAULT_CONFIG) return false
-
-        val updatedNames = getAllConfigNames(context)
-            .map { normalizeConfigName(it) }
-            .filter { it != safeName }
-            .distinct()
-            .ifEmpty { listOf(DEFAULT_CONFIG) }
-
-        val editor = prefs(context).edit()
-            .remove(configKey(safeName))
-            .remove(KEY_LOOP_MODE + "_" + safeName)
-            .remove(KEY_LOOP_VALUE + "_" + safeName)
-            .putString(KEY_ACTIVE_CONFIG, DEFAULT_CONFIG)
-            .putString(KEY_CONFIG_LIST, JSONArray(updatedNames).toString())
-
-        return editor.commit()
-    }
-
     fun clear(context: Context) {
         val editor = prefs(context).edit()
             .remove(currentGestureKey(context))
-            .putString(loopModeKey(context), "ONCE")
-            .putInt(loopValueKey(context), 1)
+            .putString(KEY_LOOP_MODE, "ONCE")
+            .putInt(KEY_LOOP_VALUE, 1)
 
         if (getActiveConfigName(context) == DEFAULT_CONFIG) {
             editor.remove(KEY_GESTURES)
         }
 
         editor.commit()
-    }
-
-    private fun loopModeKey(context: Context): String {
-        return KEY_LOOP_MODE + "_" + normalizeConfigName(getActiveConfigName(context))
-    }
-
-    private fun loopValueKey(context: Context): String {
-        return KEY_LOOP_VALUE + "_" + normalizeConfigName(getActiveConfigName(context))
     }
 
     fun saveLoopSettings(context: Context, mode: String, value: Int) {
@@ -361,18 +299,13 @@ object GestureStore {
         }
 
         prefs(context).edit()
-            .putString(loopModeKey(context), safeMode)
-            .putInt(loopValueKey(context), safeValue)
+            .putString(KEY_LOOP_MODE, safeMode)
+            .putInt(KEY_LOOP_VALUE, safeValue)
             .apply()
     }
 
     fun getLoopMode(context: Context): String {
-        val p = prefs(context)
-        val mode = p.getString(
-            loopModeKey(context),
-            "ONCE"
-        ) ?: "ONCE"
-
+        val mode = prefs(context).getString(KEY_LOOP_MODE, "ONCE") ?: "ONCE"
         return when (mode) {
             "COUNT", "INFINITE", "TIME" -> mode
             else -> "ONCE"
@@ -382,11 +315,180 @@ object GestureStore {
     fun getLoopValue(context: Context): Int {
         val p = prefs(context)
         return when (getLoopMode(context)) {
-            "COUNT" -> p.getInt(loopValueKey(context), 10).coerceIn(1, 999)
-            "TIME" -> p.getInt(loopValueKey(context), 5).coerceIn(1, 240)
+            "COUNT" -> p.getInt(KEY_LOOP_VALUE, 10).coerceIn(1, 999)
+            "TIME" -> p.getInt(KEY_LOOP_VALUE, 5).coerceIn(1, 240)
             "INFINITE" -> 0
             else -> 1
         }
     }
 }
+'''
 
+gs = gs[:m.start()] + gesture_store_v2 + "\n"
+GS.write_text(gs, encoding="utf-8")
+print("✅ GestureStore V2 safe vault applied")
+
+# ==========================================================
+# 2) FloatingControlService: label config switcher
+# ==========================================================
+label_pattern = re.compile(
+    r'''label\s*=\s*TextView\(this\)\.apply\s*\{.*?\n\s*\}''',
+    re.S
+)
+
+label_new = '''label = TextView(this).apply {
+            text = "📁 " + GestureStore.getActiveConfigName(this@FloatingControlService)
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            setPadding(12, 0, 18, 0)
+            isClickable = true
+            setOnClickListener { showConfigManagerDialog() }
+        }'''
+
+fcs2, n = label_pattern.subn(label_new, fcs, count=1)
+if n == 0:
+    fail("label TextView block replace nahi hua")
+fcs = fcs2
+
+# Tap + drag compatibility: OnTouchListener pehle click consume kar raha tha.
+old_touch = '''                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    isDragging = false
+                    true
+                }'''
+
+new_touch = '''                MotionEvent.ACTION_UP -> {
+                    if (!isDragging) {
+                        dragHandle.performClick()
+                    }
+                    isDragging = false
+                    true
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    isDragging = false
+                    true
+                }'''
+
+if old_touch in fcs:
+    fcs = fcs.replace(old_touch, new_touch, 1)
+elif "dragHandle.performClick()" not in fcs:
+    fail("makePanelDraggable ACTION_UP block patch nahi hua")
+
+dialogs = r'''
+    private fun refreshConfigLabel() {
+        if (::label.isInitialized) {
+            label.text = "📁 " + GestureStore.getActiveConfigName(this)
+        }
+    }
+
+    private fun prepareOverlayDialog(dialog: android.app.AlertDialog) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        } else {
+            @Suppress("DEPRECATION")
+            dialog.window?.setType(WindowManager.LayoutParams.TYPE_PHONE)
+        }
+    }
+
+    private fun showConfigManagerDialog() {
+        if (isRecording || AutoActionService.isPlaying() || unsavedGestures.isNotEmpty()) {
+            Toast.makeText(this, "Recording/Play/Unsaved edit ke time config change nahi kar sakte", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val savedConfigs = GestureStore.getAllConfigNames(this).toMutableList()
+        val items = (savedConfigs + "➕ Create New Config").toTypedArray()
+
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Macro Configs")
+            .setItems(items) { _, which ->
+                if (which == savedConfigs.size) {
+                    showCreateConfigDialog()
+                } else {
+                    val selected = savedConfigs[which]
+                    GestureStore.setActiveConfigName(this, selected)
+                    refreshConfigLabel()
+
+                    unsavedGestures = emptyList()
+                    glassHiddenAt = 0L
+                    pendingDiscardConfirm = false
+
+                    val hasOld = GestureStore.hasRecording(this)
+                    updateUIState(if (hasOld) "PLAY" else "START", false, hasOld, true)
+                    restorePanelUI()
+
+                    Toast.makeText(this, "Switched: $selected", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .create()
+
+        prepareOverlayDialog(dialog)
+        dialog.show()
+    }
+
+    private fun showCreateConfigDialog() {
+        if (isRecording || AutoActionService.isPlaying() || unsavedGestures.isNotEmpty()) {
+            Toast.makeText(this, "Pehle current recording/save complete karo", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val input = android.widget.EditText(this).apply {
+            hint = "New Config Name"
+            setSingleLine(true)
+        }
+
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Create Config Block")
+            .setView(input)
+            .setPositiveButton("Create") { _, _ ->
+                val name = input.text?.toString()
+                    ?.replace(Regex("[\\r\\n\\t]+"), " ")
+                    ?.replace(Regex("\\s+"), " ")
+                    ?.trim()
+                    ?.take(40)
+                    .orEmpty()
+
+                if (name.isBlank()) {
+                    Toast.makeText(this, "Config name empty nahi ho sakta", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+
+                GestureStore.setActiveConfigName(this, name)
+                refreshConfigLabel()
+
+                unsavedGestures = emptyList()
+                glassHiddenAt = 0L
+                pendingDiscardConfirm = false
+
+                updateUIState("START", false, false, true)
+                restorePanelUI()
+
+                Toast.makeText(this, "Created: $name", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Cancel", null)
+            .create()
+
+        prepareOverlayDialog(dialog)
+        dialog.show()
+    }
+
+'''
+
+if "private fun showConfigManagerDialog()" not in fcs:
+    anchor = "private fun stopEverythingAndClose() {"
+    if anchor not in fcs:
+        fail("stopEverythingAndClose anchor nahi mila")
+    fcs = fcs.replace(anchor, dialogs + "\n    " + anchor, 1)
+else:
+    print("ℹ️ Config dialog functions already exist")
+
+FCS.write_text(fcs, encoding="utf-8")
+print("✅ FloatingControlService config switcher applied")
+PY
+
+echo "🔎 Verify patches..."
+grep -q "KEY_ACTIVE_CONFIG" "$GS" || { echo "❌ GestureStore V2 missing"; exit 1; }
+grep -q "showConfigManagerDialog" "$FCS" || { echo "❌ Config dialog missing"; exit 1; }
+grep -q "dragHandle.performClick()" "$FCS" || { echo "❌ Label tap/drag fix missing"; exit 1; }
+
+./gradlew assembleDebug

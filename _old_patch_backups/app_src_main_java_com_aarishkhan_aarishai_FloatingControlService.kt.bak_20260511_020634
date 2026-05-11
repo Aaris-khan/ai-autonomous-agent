@@ -435,24 +435,6 @@ class FloatingControlService : Service() {
                     Toast.makeText(this, "Switched: $selected", Toast.LENGTH_SHORT).show()
                 }
             }
-            .setNeutralButton("Delete Active Config") { _, _ ->
-                val current = GestureStore.getActiveConfigName(this)
-                val deleted = GestureStore.deleteConfig(this, current)
-                unsavedGestures = emptyList()
-                glassHiddenAt = 0L
-                nextNavigationGapOverride = null
-                pendingDiscardConfirm = false
-                refreshConfigLabel()
-                if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
-                val hasOld = GestureStore.hasRecording(this)
-                updateUIState(if (hasOld) "PLAY" else "START", false, hasOld, true)
-                restorePanelUI()
-                Toast.makeText(
-                    this,
-                    if (deleted) "Deleted: $current" else "Default Config delete nahi ho sakta",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
             .create()
 
         showOverlayDialogSafely(dialog)
@@ -947,7 +929,25 @@ class FloatingControlService : Service() {
         restorePanelUI()
         Toast.makeText(this, "✅ Poori Memory Save ho gayi!", Toast.LENGTH_SHORT).show()
     }
-private fun clearSavedRecordingFromPanel() {
+
+        private fun stopRecording() {
+        isRecording = false
+        pendingDiscardConfirm = false
+        safeRemoveView(captureView)
+        captureView = null
+        glassHiddenAt = 0L
+        nextNavigationGapOverride = null
+
+        if (unsavedGestures.isNotEmpty()) {
+            Toast.makeText(this, "⚠️ Unsaved multi-page steps cancel ho gaye", Toast.LENGTH_SHORT).show()
+        }
+        unsavedGestures = emptyList()
+        val hasOld = GestureStore.hasRecording(this)
+        updateUIState(if (hasOld) "PLAY" else "START", false, hasOld, true)
+        restorePanelUI()
+    }
+
+        private fun clearSavedRecordingFromPanel() {
         if (isRecording || AutoActionService.isPlaying() || unsavedGestures.isNotEmpty()) {
             Toast.makeText(this, "Abhi saaf nahi kar sakte", Toast.LENGTH_SHORT).show()
             return

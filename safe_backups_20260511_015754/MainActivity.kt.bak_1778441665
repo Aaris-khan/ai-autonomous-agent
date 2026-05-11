@@ -18,24 +18,13 @@ class MainActivity : Activity() {
     private var isWaitingForPermission = false
     private var lastPermissionLaunchAt = 0L
     private var notificationPermissionAskedThisSession = false
-    private var lastPermissionScreen: String? = null
-    private var autoPermissionPromptDone = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        isWaitingForPermission = savedInstanceState?.getBoolean(KEY_WAITING_PERMISSION, false) ?: false
-        lastPermissionLaunchAt = 0L
-        notificationPermissionAskedThisSession = savedInstanceState?.getBoolean(KEY_NOTIFICATION_ASKED, false) ?: false
-        lastPermissionScreen = savedInstanceState?.getString(KEY_LAST_PERMISSION_SCREEN)
-        autoPermissionPromptDone = savedInstanceState?.getBoolean(KEY_AUTO_PERMISSION_PROMPT_DONE, false) ?: false
-
         setContentView(R.layout.activity_main)
 
         btnScreenCommand = findViewById(R.id.btnScreenCommand)
         btnScreenCommand.setOnClickListener {
-            lastPermissionScreen = null
-            autoPermissionPromptDone = false
             startScreenCommandSystem(forceOpenSettings = true)
         }
     }
@@ -45,30 +34,13 @@ class MainActivity : Activity() {
 
         if (isWaitingForPermission) {
             isWaitingForPermission = false
-            val returnedFrom = lastPermissionScreen
-            lastPermissionScreen = null
-
             if (hasOverlayPermission() && isAccessibilityServiceEnabled()) {
-                autoPermissionPromptDone = false
                 startScreenCommandSystem(forceOpenSettings = false)
-                return
             }
-
-            if (returnedFrom == "overlay" && hasOverlayPermission() && !isAccessibilityServiceEnabled()) {
-                startScreenCommandSystem(forceOpenSettings = true)
-                return
-            }
-
-            Toast.makeText(
-                this,
-                "Permission enable karke SCREEN COMMAND dobara dabao",
-                Toast.LENGTH_SHORT
-            ).show()
             return
         }
 
-        if ((!hasOverlayPermission() || !isAccessibilityServiceEnabled()) && !autoPermissionPromptDone) {
-            autoPermissionPromptDone = true
+        if (!hasOverlayPermission() || !isAccessibilityServiceEnabled()) {
             startScreenCommandSystem(forceOpenSettings = true)
         }
     }
@@ -78,7 +50,6 @@ class MainActivity : Activity() {
             if (forceOpenSettings && canLaunchPermissionScreenSafely()) {
                 Toast.makeText(this, "Overlay permission ON karo", Toast.LENGTH_LONG).show()
                 isWaitingForPermission = true
-                lastPermissionScreen = "overlay"
                 startActivity(
                     Intent(
                         Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -93,7 +64,6 @@ class MainActivity : Activity() {
             if (forceOpenSettings && canLaunchPermissionScreenSafely()) {
                 Toast.makeText(this, "Accessibility Service ON karo", Toast.LENGTH_LONG).show()
                 isWaitingForPermission = true
-                lastPermissionScreen = "accessibility"
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
             return
@@ -107,8 +77,6 @@ class MainActivity : Activity() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATION_PERMISSION)
             return
         }
-
-        autoPermissionPromptDone = false
 
         if (FloatingControlService.instance != null) {
             moveTaskToBack(true)
@@ -172,21 +140,7 @@ class MainActivity : Activity() {
         return false
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        outState.putBoolean(KEY_WAITING_PERMISSION, isWaitingForPermission)
-        outState.putLong(KEY_LAST_PERMISSION_LAUNCH_AT, 0L)
-        outState.putBoolean(KEY_NOTIFICATION_ASKED, notificationPermissionAskedThisSession)
-        outState.putString(KEY_LAST_PERMISSION_SCREEN, lastPermissionScreen)
-        outState.putBoolean(KEY_AUTO_PERMISSION_PROMPT_DONE, autoPermissionPromptDone)
-    }
-
     companion object {
         private const val REQUEST_NOTIFICATION_PERMISSION = 5001
-        private const val KEY_WAITING_PERMISSION = "waiting_permission"
-        private const val KEY_LAST_PERMISSION_LAUNCH_AT = "last_permission_launch_at"
-        private const val KEY_NOTIFICATION_ASKED = "notification_asked"
-        private const val KEY_LAST_PERMISSION_SCREEN = "last_permission_screen"
-        private const val KEY_AUTO_PERMISSION_PROMPT_DONE = "auto_permission_prompt_done"
     }
 }

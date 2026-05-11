@@ -425,7 +425,6 @@ class FloatingControlService : Service() {
 
                     unsavedGestures = emptyList()
                     glassHiddenAt = 0L
-                    nextNavigationGapOverride = null
                     pendingDiscardConfirm = false
 
                     val hasOld = GestureStore.hasRecording(this)
@@ -434,24 +433,6 @@ class FloatingControlService : Service() {
 
                     Toast.makeText(this, "Switched: $selected", Toast.LENGTH_SHORT).show()
                 }
-            }
-            .setNeutralButton("Delete Active Config") { _, _ ->
-                val current = GestureStore.getActiveConfigName(this)
-                val deleted = GestureStore.deleteConfig(this, current)
-                unsavedGestures = emptyList()
-                glassHiddenAt = 0L
-                nextNavigationGapOverride = null
-                pendingDiscardConfirm = false
-                refreshConfigLabel()
-                if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
-                val hasOld = GestureStore.hasRecording(this)
-                updateUIState(if (hasOld) "PLAY" else "START", false, hasOld, true)
-                restorePanelUI()
-                Toast.makeText(
-                    this,
-                    if (deleted) "Deleted: $current" else "Default Config delete nahi ho sakta",
-                    Toast.LENGTH_SHORT
-                ).show()
             }
             .create()
 
@@ -491,7 +472,6 @@ class FloatingControlService : Service() {
 
                 unsavedGestures = emptyList()
                 glassHiddenAt = 0L
-                nextNavigationGapOverride = null
                 pendingDiscardConfirm = false
 
                 updateUIState("START", false, false, true)
@@ -519,7 +499,6 @@ class FloatingControlService : Service() {
 
         pendingDiscardConfirm = false
         glassHiddenAt = 0L
-        nextNavigationGapOverride = null
         unsavedGestures = emptyList()
         isRecording = false
         playbackWatcherRunnable?.let { handler.removeCallbacks(it) }
@@ -643,7 +622,6 @@ class FloatingControlService : Service() {
         isRecording = false
         pendingDiscardConfirm = false
         glassHiddenAt = 0L
-        nextNavigationGapOverride = null
         safeRemoveView(captureView)
         safeRemoveView(panelView)
         captureView = null
@@ -661,7 +639,6 @@ class FloatingControlService : Service() {
 
 
     private var glassHiddenAt = 0L
-    private var nextNavigationGapOverride: Long? = null
 
     // ✅ SAFE UI STATE FIX: Default parameter added to prevent compile errors
     private fun closeSettingsPanel() {
@@ -688,7 +665,7 @@ class FloatingControlService : Service() {
         }
         if (::btnLoop.isInitialized) btnLoop.visibility = if (showOthers && GestureStore.hasRecording(this)) View.VISIBLE else View.GONE
         if (::btnCut.isInitialized) btnCut.visibility = if (showCut) View.VISIBLE else View.GONE
-        btnClear?.visibility = if (showOthers && GestureStore.hasRecording(this) && unsavedGestures.isEmpty()) View.VISIBLE else View.GONE
+        btnClear?.visibility = if (showOthers) View.VISIBLE else View.GONE
         // btnSettings/btnSpeed removed from UI for now.
     }
 
@@ -705,17 +682,11 @@ class FloatingControlService : Service() {
             g.delayFromStart.coerceAtLeast(0L) + (g.points.lastOrNull()?.t ?: 0L).coerceAtLeast(0L)
         } ?: 0L
 
-        val overrideGap = nextNavigationGapOverride
-        val navigationGap = if (unsavedGestures.isNotEmpty()) {
-            (overrideGap ?: if (glassHiddenAt > 0L) {
-                view.getRecordingStartTime() - glassHiddenAt
-            } else {
-                0L
-            }).coerceAtLeast(0L).coerceAtMost(120000L)
+        val navigationGap = if (unsavedGestures.isNotEmpty() && glassHiddenAt > 0L) {
+            (view.getRecordingStartTime() - glassHiddenAt).coerceAtLeast(0L).coerceAtMost(120000L)
         } else {
             0L
         }
-        nextNavigationGapOverride = null
 
         val timeOffset = if (unsavedGestures.isEmpty()) 0L else lastGestureEnd + navigationGap
         unsavedGestures = (unsavedGestures + newGestures.map { g ->
@@ -742,7 +713,6 @@ class FloatingControlService : Service() {
             safeRemoveView(captureView)
             captureView = null
             glassHiddenAt = android.os.SystemClock.uptimeMillis()
-            nextNavigationGapOverride = null
 
             val hasOld = GestureStore.hasRecording(this)
             val hasUnsaved = unsavedGestures.isNotEmpty()
@@ -779,7 +749,6 @@ class FloatingControlService : Service() {
 
         unsavedGestures = emptyList()
         glassHiddenAt = 0L
-        nextNavigationGapOverride = null
         startRecording()
     }
 
@@ -855,12 +824,10 @@ class FloatingControlService : Service() {
 
             unsavedGestures = remainingGestures
 
-            if (unsavedGestures.isEmpty()) {
-                glassHiddenAt = 0L
-                nextNavigationGapOverride = null
+            glassHiddenAt = if (unsavedGestures.isEmpty()) {
+                0L
             } else {
-                glassHiddenAt = android.os.SystemClock.uptimeMillis()
-                nextNavigationGapOverride = preservedGap
+                (android.os.SystemClock.uptimeMillis() - preservedGap).coerceAtLeast(0L)
             }
 
             val hasOld = GestureStore.hasRecording(this)
@@ -882,7 +849,6 @@ class FloatingControlService : Service() {
                 GestureStore.clear(this)
                 unsavedGestures = emptyList()
                 glassHiddenAt = 0L
-                nextNavigationGapOverride = null
                 updateUIState("START", false, false, true)
                 restorePanelUI()
                 Toast.makeText(this, "↩️ Last step delete hua. Ab memory empty hai.", Toast.LENGTH_SHORT).show()
@@ -897,7 +863,6 @@ class FloatingControlService : Service() {
 
             unsavedGestures = emptyList()
             glassHiddenAt = 0L
-            nextNavigationGapOverride = null
 
             updateUIState("PLAY", false, true, true)
             restorePanelUI()
@@ -922,7 +887,6 @@ class FloatingControlService : Service() {
         }
 
         glassHiddenAt = 0L
-        nextNavigationGapOverride = null
         pendingDiscardConfirm = false
 
         if (unsavedGestures.isEmpty()) {
@@ -947,7 +911,24 @@ class FloatingControlService : Service() {
         restorePanelUI()
         Toast.makeText(this, "✅ Poori Memory Save ho gayi!", Toast.LENGTH_SHORT).show()
     }
-private fun clearSavedRecordingFromPanel() {
+
+        private fun stopRecording() {
+        isRecording = false
+        pendingDiscardConfirm = false
+        safeRemoveView(captureView)
+        captureView = null
+        glassHiddenAt = 0L
+
+        if (unsavedGestures.isNotEmpty()) {
+            Toast.makeText(this, "⚠️ Unsaved multi-page steps cancel ho gaye", Toast.LENGTH_SHORT).show()
+        }
+        unsavedGestures = emptyList()
+        val hasOld = GestureStore.hasRecording(this)
+        updateUIState(if (hasOld) "PLAY" else "START", false, hasOld, true)
+        restorePanelUI()
+    }
+
+        private fun clearSavedRecordingFromPanel() {
         if (isRecording || AutoActionService.isPlaying() || unsavedGestures.isNotEmpty()) {
             Toast.makeText(this, "Abhi saaf nahi kar sakte", Toast.LENGTH_SHORT).show()
             return
@@ -955,7 +936,6 @@ private fun clearSavedRecordingFromPanel() {
         GestureStore.clear(this)
         unsavedGestures = emptyList()
         glassHiddenAt = 0L
-        nextNavigationGapOverride = null
         pendingDiscardConfirm = false
         updateUIState("START", false, false, true)
         restorePanelUI()

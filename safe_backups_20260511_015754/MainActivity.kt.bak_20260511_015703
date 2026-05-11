@@ -25,7 +25,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
 
         isWaitingForPermission = savedInstanceState?.getBoolean(KEY_WAITING_PERMISSION, false) ?: false
-        lastPermissionLaunchAt = 0L
+        lastPermissionLaunchAt = savedInstanceState?.getLong(KEY_LAST_PERMISSION_LAUNCH_AT, 0L) ?: 0L
         notificationPermissionAskedThisSession = savedInstanceState?.getBoolean(KEY_NOTIFICATION_ASKED, false) ?: false
         lastPermissionScreen = savedInstanceState?.getString(KEY_LAST_PERMISSION_SCREEN)
         autoPermissionPromptDone = savedInstanceState?.getBoolean(KEY_AUTO_PERMISSION_PROMPT_DONE, false) ?: false
@@ -175,7 +175,7 @@ class MainActivity : Activity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putBoolean(KEY_WAITING_PERMISSION, isWaitingForPermission)
-        outState.putLong(KEY_LAST_PERMISSION_LAUNCH_AT, 0L)
+        outState.putLong(KEY_LAST_PERMISSION_LAUNCH_AT, lastPermissionLaunchAt)
         outState.putBoolean(KEY_NOTIFICATION_ASKED, notificationPermissionAskedThisSession)
         outState.putString(KEY_LAST_PERMISSION_SCREEN, lastPermissionScreen)
         outState.putBoolean(KEY_AUTO_PERMISSION_PROMPT_DONE, autoPermissionPromptDone)

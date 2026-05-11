@@ -29,9 +29,7 @@ data class TargetSnapshot(
     val targetWPercent: Float = 0f,
     val targetHPercent: Float = 0f,
     val insideXPercent: Float = 0.5f,
-    val insideYPercent: Float = 0.5f,
-    val recordedScreenW: Int = 0,
-    val recordedScreenH: Int = 0
+    val insideYPercent: Float = 0.5f
 )
 
 data class RecordedGesture(
@@ -55,112 +53,14 @@ data class RecordedGesture(
     val targetWPercent: Float = 0f,
     val targetHPercent: Float = 0f,
     val insideXPercent: Float = 0.5f,
-    val insideYPercent: Float = 0.5f,
-    val recordedScreenW: Int = 0,
-    val recordedScreenH: Int = 0
+    val insideYPercent: Float = 0.5f
 )
 
 object GestureStore {
     private const val PREF_NAME = "screen_command_store"
-
-    // Old key ko rakho, taaki purani saved recording gayab na ho.
     private const val KEY_GESTURES = "recorded_gestures"
-
     private const val KEY_LOOP_MODE = "loop_mode"
     private const val KEY_LOOP_VALUE = "loop_value"
-
-    private const val KEY_ACTIVE_CONFIG = "active_config"
-    private const val KEY_CONFIG_LIST = "config_list_json"
-    private const val DEFAULT_CONFIG = "Default Config"
-    private const val CONFIG_KEY_PREFIX = "config_"
-
-    private fun prefs(context: Context) =
-        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-
-    private fun normalizeConfigName(name: String?): String {
-        val cleaned = (name ?: DEFAULT_CONFIG)
-            .replace(Regex("[\\r\\n\\t]+"), " ")
-            .replace(Regex("\\s+"), " ")
-            .replace(Regex("[^\\p{L}\\p{N} _.-]+"), "")
-            .trim()
-            .take(40)
-
-        return cleaned.ifBlank { DEFAULT_CONFIG }
-    }
-
-    private fun configKey(name: String): String {
-        return CONFIG_KEY_PREFIX + normalizeConfigName(name)
-    }
-
-    private fun currentGestureKey(context: Context): String {
-        return configKey(getActiveConfigName(context))
-    }
-
-    fun getActiveConfigName(context: Context): String {
-        return normalizeConfigName(
-            prefs(context).getString(KEY_ACTIVE_CONFIG, DEFAULT_CONFIG)
-        )
-    }
-
-    fun setActiveConfigName(context: Context, name: String) {
-        val safeName = normalizeConfigName(name)
-        val allNames = (getAllConfigNames(context) + safeName)
-            .map { normalizeConfigName(it) }
-            .distinct()
-
-        prefs(context).edit()
-            .putString(KEY_ACTIVE_CONFIG, safeName)
-            .putString(KEY_CONFIG_LIST, JSONArray(allNames).toString())
-            .apply()
-    }
-
-    fun getAllConfigNames(context: Context): List<String> {
-        val p = prefs(context)
-        val names = linkedSetOf<String>()
-
-        names.add(DEFAULT_CONFIG)
-
-        val raw = p.getString(KEY_CONFIG_LIST, null)
-        if (!raw.isNullOrBlank()) {
-            try {
-                val arr = JSONArray(raw)
-                for (i in 0 until arr.length()) {
-                    val name = normalizeConfigName(arr.optString(i, ""))
-                    if (name.isNotBlank()) names.add(name)
-                }
-            } catch (_: Exception) {
-                raw.split(",")
-                    .map { normalizeConfigName(it) }
-                    .filter { it.isNotBlank() }
-                    .forEach { names.add(it) }
-            }
-        }
-
-        names.add(getActiveConfigName(context))
-
-        return names.toList()
-    }
-
-    private fun markActiveConfigInList(context: Context) {
-        setActiveConfigName(context, getActiveConfigName(context))
-    }
-
-    private fun loadJsonForActiveConfig(context: Context): String? {
-        val p = prefs(context)
-        val activeName = getActiveConfigName(context)
-        val modern = p.getString(configKey(activeName), null)
-
-        if (!modern.isNullOrBlank()) return modern
-
-        // ✅ Migration fallback:
-        // Agar user ka old saved macro KEY_GESTURES mein pada hai,
-        // to Default Config mein woh still load hoga.
-        return if (activeName == DEFAULT_CONFIG) {
-            p.getString(KEY_GESTURES, null)
-        } else {
-            null
-        }
-    }
 
     fun save(context: Context, gestures: List<RecordedGesture>): Boolean {
         val cleanGestures = gestures
@@ -168,8 +68,6 @@ object GestureStore {
             .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
 
         if (cleanGestures.isEmpty()) return false
-
-        markActiveConfigInList(context)
 
         val mainArray = JSONArray()
 
@@ -195,8 +93,6 @@ object GestureStore {
             gestureObject.put("targetHPercent", gesture.targetHPercent.coerceIn(0f, 1f).toDouble())
             gestureObject.put("insideXPercent", gesture.insideXPercent.coerceIn(0f, 1f).toDouble())
             gestureObject.put("insideYPercent", gesture.insideYPercent.coerceIn(0f, 1f).toDouble())
-            gestureObject.put("recordedScreenW", gesture.recordedScreenW.coerceAtLeast(0))
-            gestureObject.put("recordedScreenH", gesture.recordedScreenH.coerceAtLeast(0))
 
             val pointsArray = JSONArray()
             gesture.points
@@ -218,19 +114,15 @@ object GestureStore {
 
         if (mainArray.length() == 0) return false
 
-        val editor = prefs(context).edit()
-            .putString(currentGestureKey(context), mainArray.toString())
-
-        // Default Config save karte waqt old key bhi migrate/remove ho jaye.
-        if (getActiveConfigName(context) == DEFAULT_CONFIG) {
-            editor.remove(KEY_GESTURES)
-        }
-
-        return editor.commit()
+        return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_GESTURES, mainArray.toString())
+            .commit()
     }
 
     fun load(context: Context): List<RecordedGesture> {
-        val json = loadJsonForActiveConfig(context) ?: return emptyList()
+        val json = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_GESTURES, null) ?: return emptyList()
 
         return try {
             val mainArray = JSONArray(json)
@@ -276,9 +168,7 @@ object GestureStore {
                         targetWPercent = gestureObject.optDouble("targetWPercent", 0.0).toFloat().coerceIn(0f, 1f),
                         targetHPercent = gestureObject.optDouble("targetHPercent", 0.0).toFloat().coerceIn(0f, 1f),
                         insideXPercent = gestureObject.optDouble("insideXPercent", 0.5).toFloat().coerceIn(0f, 1f),
-                        insideYPercent = gestureObject.optDouble("insideYPercent", 0.5).toFloat().coerceIn(0f, 1f),
-                        recordedScreenW = gestureObject.optInt("recordedScreenW", 0).coerceAtLeast(0),
-                        recordedScreenH = gestureObject.optInt("recordedScreenH", 0).coerceAtLeast(0)
+                        insideYPercent = gestureObject.optDouble("insideYPercent", 0.5).toFloat().coerceIn(0f, 1f)
                     )
                 )
             }
@@ -306,46 +196,13 @@ object GestureStore {
         } ?: 0L
     }
 
-
-    fun deleteConfig(context: Context, name: String): Boolean {
-        val safeName = normalizeConfigName(name)
-        if (safeName == DEFAULT_CONFIG) return false
-
-        val updatedNames = getAllConfigNames(context)
-            .map { normalizeConfigName(it) }
-            .filter { it != safeName }
-            .distinct()
-            .ifEmpty { listOf(DEFAULT_CONFIG) }
-
-        val editor = prefs(context).edit()
-            .remove(configKey(safeName))
-            .remove(KEY_LOOP_MODE + "_" + safeName)
-            .remove(KEY_LOOP_VALUE + "_" + safeName)
-            .putString(KEY_ACTIVE_CONFIG, DEFAULT_CONFIG)
-            .putString(KEY_CONFIG_LIST, JSONArray(updatedNames).toString())
-
-        return editor.commit()
-    }
-
     fun clear(context: Context) {
-        val editor = prefs(context).edit()
-            .remove(currentGestureKey(context))
-            .putString(loopModeKey(context), "ONCE")
-            .putInt(loopValueKey(context), 1)
-
-        if (getActiveConfigName(context) == DEFAULT_CONFIG) {
-            editor.remove(KEY_GESTURES)
-        }
-
-        editor.commit()
-    }
-
-    private fun loopModeKey(context: Context): String {
-        return KEY_LOOP_MODE + "_" + normalizeConfigName(getActiveConfigName(context))
-    }
-
-    private fun loopValueKey(context: Context): String {
-        return KEY_LOOP_VALUE + "_" + normalizeConfigName(getActiveConfigName(context))
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove(KEY_GESTURES)
+            .putString(KEY_LOOP_MODE, "ONCE")
+            .putInt(KEY_LOOP_VALUE, 1)
+            .commit()
     }
 
     fun saveLoopSettings(context: Context, mode: String, value: Int) {
@@ -360,19 +217,16 @@ object GestureStore {
             else -> 1
         }
 
-        prefs(context).edit()
-            .putString(loopModeKey(context), safeMode)
-            .putInt(loopValueKey(context), safeValue)
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_LOOP_MODE, safeMode)
+            .putInt(KEY_LOOP_VALUE, safeValue)
             .apply()
     }
 
     fun getLoopMode(context: Context): String {
-        val p = prefs(context)
-        val mode = p.getString(
-            loopModeKey(context),
-            "ONCE"
-        ) ?: "ONCE"
-
+        val mode = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_LOOP_MODE, "ONCE") ?: "ONCE"
         return when (mode) {
             "COUNT", "INFINITE", "TIME" -> mode
             else -> "ONCE"
@@ -380,13 +234,12 @@ object GestureStore {
     }
 
     fun getLoopValue(context: Context): Int {
-        val p = prefs(context)
+        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         return when (getLoopMode(context)) {
-            "COUNT" -> p.getInt(loopValueKey(context), 10).coerceIn(1, 999)
-            "TIME" -> p.getInt(loopValueKey(context), 5).coerceIn(1, 240)
+            "COUNT" -> prefs.getInt(KEY_LOOP_VALUE, 10).coerceIn(1, 999)
+            "TIME" -> prefs.getInt(KEY_LOOP_VALUE, 5).coerceIn(1, 240)
             "INFINITE" -> 0
             else -> 1
         }
     }
 }
-

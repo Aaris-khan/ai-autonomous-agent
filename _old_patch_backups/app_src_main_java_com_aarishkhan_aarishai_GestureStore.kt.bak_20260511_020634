@@ -306,27 +306,6 @@ object GestureStore {
         } ?: 0L
     }
 
-
-    fun deleteConfig(context: Context, name: String): Boolean {
-        val safeName = normalizeConfigName(name)
-        if (safeName == DEFAULT_CONFIG) return false
-
-        val updatedNames = getAllConfigNames(context)
-            .map { normalizeConfigName(it) }
-            .filter { it != safeName }
-            .distinct()
-            .ifEmpty { listOf(DEFAULT_CONFIG) }
-
-        val editor = prefs(context).edit()
-            .remove(configKey(safeName))
-            .remove(KEY_LOOP_MODE + "_" + safeName)
-            .remove(KEY_LOOP_VALUE + "_" + safeName)
-            .putString(KEY_ACTIVE_CONFIG, DEFAULT_CONFIG)
-            .putString(KEY_CONFIG_LIST, JSONArray(updatedNames).toString())
-
-        return editor.commit()
-    }
-
     fun clear(context: Context) {
         val editor = prefs(context).edit()
             .remove(currentGestureKey(context))

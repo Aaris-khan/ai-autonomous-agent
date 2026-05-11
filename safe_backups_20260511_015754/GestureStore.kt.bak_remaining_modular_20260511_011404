@@ -29,9 +29,7 @@ data class TargetSnapshot(
     val targetWPercent: Float = 0f,
     val targetHPercent: Float = 0f,
     val insideXPercent: Float = 0.5f,
-    val insideYPercent: Float = 0.5f,
-    val recordedScreenW: Int = 0,
-    val recordedScreenH: Int = 0
+    val insideYPercent: Float = 0.5f
 )
 
 data class RecordedGesture(
@@ -55,9 +53,7 @@ data class RecordedGesture(
     val targetWPercent: Float = 0f,
     val targetHPercent: Float = 0f,
     val insideXPercent: Float = 0.5f,
-    val insideYPercent: Float = 0.5f,
-    val recordedScreenW: Int = 0,
-    val recordedScreenH: Int = 0
+    val insideYPercent: Float = 0.5f
 )
 
 object GestureStore {
@@ -81,7 +77,6 @@ object GestureStore {
         val cleaned = (name ?: DEFAULT_CONFIG)
             .replace(Regex("[\\r\\n\\t]+"), " ")
             .replace(Regex("\\s+"), " ")
-            .replace(Regex("[^\\p{L}\\p{N} _.-]+"), "")
             .trim()
             .take(40)
 
@@ -195,8 +190,6 @@ object GestureStore {
             gestureObject.put("targetHPercent", gesture.targetHPercent.coerceIn(0f, 1f).toDouble())
             gestureObject.put("insideXPercent", gesture.insideXPercent.coerceIn(0f, 1f).toDouble())
             gestureObject.put("insideYPercent", gesture.insideYPercent.coerceIn(0f, 1f).toDouble())
-            gestureObject.put("recordedScreenW", gesture.recordedScreenW.coerceAtLeast(0))
-            gestureObject.put("recordedScreenH", gesture.recordedScreenH.coerceAtLeast(0))
 
             val pointsArray = JSONArray()
             gesture.points
@@ -276,9 +269,7 @@ object GestureStore {
                         targetWPercent = gestureObject.optDouble("targetWPercent", 0.0).toFloat().coerceIn(0f, 1f),
                         targetHPercent = gestureObject.optDouble("targetHPercent", 0.0).toFloat().coerceIn(0f, 1f),
                         insideXPercent = gestureObject.optDouble("insideXPercent", 0.5).toFloat().coerceIn(0f, 1f),
-                        insideYPercent = gestureObject.optDouble("insideYPercent", 0.5).toFloat().coerceIn(0f, 1f),
-                        recordedScreenW = gestureObject.optInt("recordedScreenW", 0).coerceAtLeast(0),
-                        recordedScreenH = gestureObject.optInt("recordedScreenH", 0).coerceAtLeast(0)
+                        insideYPercent = gestureObject.optDouble("insideYPercent", 0.5).toFloat().coerceIn(0f, 1f)
                     )
                 )
             }
@@ -306,46 +297,17 @@ object GestureStore {
         } ?: 0L
     }
 
-
-    fun deleteConfig(context: Context, name: String): Boolean {
-        val safeName = normalizeConfigName(name)
-        if (safeName == DEFAULT_CONFIG) return false
-
-        val updatedNames = getAllConfigNames(context)
-            .map { normalizeConfigName(it) }
-            .filter { it != safeName }
-            .distinct()
-            .ifEmpty { listOf(DEFAULT_CONFIG) }
-
-        val editor = prefs(context).edit()
-            .remove(configKey(safeName))
-            .remove(KEY_LOOP_MODE + "_" + safeName)
-            .remove(KEY_LOOP_VALUE + "_" + safeName)
-            .putString(KEY_ACTIVE_CONFIG, DEFAULT_CONFIG)
-            .putString(KEY_CONFIG_LIST, JSONArray(updatedNames).toString())
-
-        return editor.commit()
-    }
-
     fun clear(context: Context) {
         val editor = prefs(context).edit()
             .remove(currentGestureKey(context))
-            .putString(loopModeKey(context), "ONCE")
-            .putInt(loopValueKey(context), 1)
+            .putString(KEY_LOOP_MODE, "ONCE")
+            .putInt(KEY_LOOP_VALUE, 1)
 
         if (getActiveConfigName(context) == DEFAULT_CONFIG) {
             editor.remove(KEY_GESTURES)
         }
 
         editor.commit()
-    }
-
-    private fun loopModeKey(context: Context): String {
-        return KEY_LOOP_MODE + "_" + normalizeConfigName(getActiveConfigName(context))
-    }
-
-    private fun loopValueKey(context: Context): String {
-        return KEY_LOOP_VALUE + "_" + normalizeConfigName(getActiveConfigName(context))
     }
 
     fun saveLoopSettings(context: Context, mode: String, value: Int) {
@@ -361,18 +323,13 @@ object GestureStore {
         }
 
         prefs(context).edit()
-            .putString(loopModeKey(context), safeMode)
-            .putInt(loopValueKey(context), safeValue)
+            .putString(KEY_LOOP_MODE, safeMode)
+            .putInt(KEY_LOOP_VALUE, safeValue)
             .apply()
     }
 
     fun getLoopMode(context: Context): String {
-        val p = prefs(context)
-        val mode = p.getString(
-            loopModeKey(context),
-            "ONCE"
-        ) ?: "ONCE"
-
+        val mode = prefs(context).getString(KEY_LOOP_MODE, "ONCE") ?: "ONCE"
         return when (mode) {
             "COUNT", "INFINITE", "TIME" -> mode
             else -> "ONCE"
@@ -382,8 +339,8 @@ object GestureStore {
     fun getLoopValue(context: Context): Int {
         val p = prefs(context)
         return when (getLoopMode(context)) {
-            "COUNT" -> p.getInt(loopValueKey(context), 10).coerceIn(1, 999)
-            "TIME" -> p.getInt(loopValueKey(context), 5).coerceIn(1, 240)
+            "COUNT" -> p.getInt(KEY_LOOP_VALUE, 10).coerceIn(1, 999)
+            "TIME" -> p.getInt(KEY_LOOP_VALUE, 5).coerceIn(1, 240)
             "INFINITE" -> 0
             else -> 1
         }

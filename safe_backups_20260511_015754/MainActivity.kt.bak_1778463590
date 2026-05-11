@@ -23,14 +23,13 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
 
         isWaitingForPermission = savedInstanceState?.getBoolean(KEY_WAITING_PERMISSION, false) ?: false
-        lastPermissionLaunchAt = 0L
+        lastPermissionLaunchAt = savedInstanceState?.getLong(KEY_LAST_PERMISSION_LAUNCH_AT, 0L) ?: 0L
         notificationPermissionAskedThisSession = savedInstanceState?.getBoolean(KEY_NOTIFICATION_ASKED, false) ?: false
         lastPermissionScreen = savedInstanceState?.getString(KEY_LAST_PERMISSION_SCREEN)
         autoPermissionPromptDone = savedInstanceState?.getBoolean(KEY_AUTO_PERMISSION_PROMPT_DONE, false) ?: false
-
-        setContentView(R.layout.activity_main)
 
         btnScreenCommand = findViewById(R.id.btnScreenCommand)
         btnScreenCommand.setOnClickListener {
@@ -49,7 +48,6 @@ class MainActivity : Activity() {
             lastPermissionScreen = null
 
             if (hasOverlayPermission() && isAccessibilityServiceEnabled()) {
-                autoPermissionPromptDone = false
                 startScreenCommandSystem(forceOpenSettings = false)
                 return
             }
@@ -107,8 +105,6 @@ class MainActivity : Activity() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATION_PERMISSION)
             return
         }
-
-        autoPermissionPromptDone = false
 
         if (FloatingControlService.instance != null) {
             moveTaskToBack(true)
@@ -175,7 +171,7 @@ class MainActivity : Activity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putBoolean(KEY_WAITING_PERMISSION, isWaitingForPermission)
-        outState.putLong(KEY_LAST_PERMISSION_LAUNCH_AT, 0L)
+        outState.putLong(KEY_LAST_PERMISSION_LAUNCH_AT, lastPermissionLaunchAt)
         outState.putBoolean(KEY_NOTIFICATION_ASKED, notificationPermissionAskedThisSession)
         outState.putString(KEY_LAST_PERMISSION_SCREEN, lastPermissionScreen)
         outState.putBoolean(KEY_AUTO_PERMISSION_PROMPT_DONE, autoPermissionPromptDone)

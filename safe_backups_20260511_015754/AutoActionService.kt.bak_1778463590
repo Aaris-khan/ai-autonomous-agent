@@ -150,17 +150,7 @@ class AutoActionService : AccessibilityService() {
             if (shouldContinue && isSamePlaybackRun(runId)) {
                 scheduledTasks.forEach { handler.removeCallbacks(it) }
                 scheduledTasks.clear()
-
-                val loopCooldownTask = object : Runnable {
-                    override fun run() {
-                        scheduledTasks.remove(this)
-                        if (isSamePlaybackRun(runId)) {
-                            playSequence(orderedGestures, runId)
-                        }
-                    }
-                }
-                scheduledTasks.add(loopCooldownTask)
-                handler.postDelayed(loopCooldownTask, 700L)
+                playSequence(orderedGestures, runId)
             } else if (isCurrentCallbackRun(runId)) {
                 isPlayingInternal = false
                 scheduledTasks.forEach { handler.removeCallbacks(it) }
@@ -255,8 +245,10 @@ class AutoActionService : AccessibilityService() {
     }
 
     private fun decrementActiveGestureSafely() {
-        if (activeGestureCount.get() > 0) {
-            activeGestureCount.decrementAndGet()
+        while (true) {
+            val current = activeGestureCount.get()
+            if (current <= 0) return
+            if (activeGestureCount.compareAndSet(current, current - 1)) return
         }
     }
 
@@ -298,16 +290,6 @@ class AutoActionService : AccessibilityService() {
 
         val screenW = resources.displayMetrics.widthPixels.toFloat().coerceAtLeast(1f)
         val screenH = resources.displayMetrics.heightPixels.toFloat().coerceAtLeast(1f)
-
-        val orientationMismatch =
-            recordedGesture.recordedScreenW > 0 &&
-            recordedGesture.recordedScreenH > 0 &&
-            ((recordedGesture.recordedScreenW > recordedGesture.recordedScreenH) != (screenW > screenH))
-
-        if (orientationMismatch && (movement || match == null)) {
-            showTinyToast("Orientation badal gayi, gesture skip")
-            return
-        }
 
         val fallbackX = if (recordedGesture.xPercent > 0f) {
             recordedGesture.xPercent * screenW
@@ -376,45 +358,55 @@ class AutoActionService : AccessibilityService() {
         val centerY: Float get() = bounds.exactCenterY()
     }
 
-    private fun safeVisible(node: AccessibilityNodeInfo?): Boolean =
-        try { node?.isVisibleToUser == true } catch (_: Exception) { false }
+    private inline fun <T> safeNodeRead(defaultValue: T, block: () -> T): T {
+        return try {
+            block()
+        } catch (_: IllegalStateException) {
+            defaultValue
+        } catch (_: Exception) {
+            defaultValue
+        }
+    }
 
-    private fun safeEnabled(node: AccessibilityNodeInfo?): Boolean =
-        try { node?.isEnabled == true } catch (_: Exception) { false }
+    private fun safeNodeVisible(node: AccessibilityNodeInfo?): Boolean =
+        safeNodeRead(false) { node?.isVisibleToUser == true }
 
-    private fun safeClickable(node: AccessibilityNodeInfo?): Boolean =
-        try { node?.isClickable == true } catch (_: Exception) { false }
+    private fun safeNodeEnabled(node: AccessibilityNodeInfo?): Boolean =
+        safeNodeRead(false) { node?.isEnabled == true }
 
-    private fun safeChildCount(node: AccessibilityNodeInfo?): Int =
-        try { node?.childCount ?: 0 } catch (_: Exception) { 0 }
+    private fun safeNodeClickable(node: AccessibilityNodeInfo?): Boolean =
+        safeNodeRead(false) { node?.isClickable == true }
 
-    private fun safeChild(node: AccessibilityNodeInfo?, index: Int): AccessibilityNodeInfo? =
-        try { node?.getChild(index) } catch (_: Exception) { null }
+    private fun safeNodeChildCount(node: AccessibilityNodeInfo?): Int =
+        safeNodeRead(0) { node?.childCount ?: 0 }
 
-    private fun safeParent(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? =
-        try { node?.parent } catch (_: Exception) { null }
+    private fun safeNodeChild(node: AccessibilityNodeInfo?, index: Int): AccessibilityNodeInfo? =
+        safeNodeRead(null) { node?.getChild(index) }
 
-    private fun safeText(node: AccessibilityNodeInfo?): String? =
-        try { node?.text?.toString() } catch (_: Exception) { null }
+    private fun safeNodeParent(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? =
+        safeNodeRead(null) { node?.parent }
 
-    private fun safeDesc(node: AccessibilityNodeInfo?): String? =
-        try { node?.contentDescription?.toString() } catch (_: Exception) { null }
-
-    private fun safeId(node: AccessibilityNodeInfo?): String? =
-        try { node?.viewIdResourceName } catch (_: Exception) { null }
-
-    private fun safeClass(node: AccessibilityNodeInfo?): String? =
-        try { node?.className?.toString() } catch (_: Exception) { null }
-
-    private fun safeBounds(node: AccessibilityNodeInfo?, out: Rect): Boolean =
-        try {
+    private fun safeNodeBounds(node: AccessibilityNodeInfo?, out: Rect): Boolean =
+        safeNodeRead(false) {
             node?.getBoundsInScreen(out)
             node != null
-        } catch (_: Exception) {
-            false
         }
 
-    private fun normalizeUltraText(value: String?): String {
+    private fun safeNodeText(node: AccessibilityNodeInfo?): String? =
+        safeNodeRead(null) { node?.text?.toString() }
+
+    private fun safeNodeDesc(node: AccessibilityNodeInfo?): String? =
+        safeNodeRead(null) { node?.contentDescription?.toString() }
+
+    private fun safeNodeId(node: AccessibilityNodeInfo?): String? =
+        safeNodeRead(null) { node?.viewIdResourceName }
+
+    private fun safeNodeClass(node: AccessibilityNodeInfo?): String? =
+        safeNodeRead(null) { node?.className?.toString() }
+
+
+
+        private fun normalizeUltraText(value: String?): String {
         return (value ?: "")
             .lowercase()
             .replace(Regex("[0-9]+"), "#")
@@ -444,9 +436,9 @@ class AutoActionService : AccessibilityService() {
     private fun ownLabelOf(node: AccessibilityNodeInfo?): String {
         if (node == null) return ""
 
-        val text = safeText(node).orEmpty()
-        val desc = safeDesc(node).orEmpty()
-        val id = safeId(node)?.substringAfterLast("/").orEmpty()
+        val text = safeNodeText(node).orEmpty()
+        val desc = safeNodeDesc(node).orEmpty()
+        val id = safeNodeId(node)?.substringAfterLast("/").orEmpty()
 
         return listOf(text, desc, id)
             .filter { it.isNotBlank() }
@@ -477,9 +469,9 @@ class AutoActionService : AccessibilityService() {
                 out.append(label)
             }
 
-            val count = safeChildCount(n)
+            val count = safeNodeChildCount(n)
             for (i in 0 until count) {
-                val child = safeChild(n, i)
+                val child = safeNodeChild(n, i)
                 if (child != null) stack.add(child)
             }
         }
@@ -487,24 +479,24 @@ class AutoActionService : AccessibilityService() {
         return out.toString().take(maxChars)
     }
 
-    private fun collectSiblingText(
+        private fun collectSiblingText(
         node: AccessibilityNodeInfo?,
         maxChars: Int = 300
     ): String {
-        val parent = safeParent(node) ?: return ""
+        val parent = safeNodeParent(node) ?: return ""
         val nodeBounds = Rect()
-        val nodeClass = safeClass(node).orEmpty()
-        if (!safeBounds(node, nodeBounds)) return ""
+        val nodeClass = safeNodeClass(node).orEmpty()
+        if (!safeNodeBounds(node, nodeBounds)) return ""
 
         val out = StringBuilder()
-        val count = safeChildCount(parent)
 
+        val count = safeNodeChildCount(parent)
         for (i in 0 until count) {
-            val child = safeChild(parent, i) ?: continue
+            val child = safeNodeChild(parent, i) ?: continue
             val childBounds = Rect()
-            if (!safeBounds(child, childBounds)) continue
+            if (!safeNodeBounds(child, childBounds)) continue
 
-            val sameNode = childBounds == nodeBounds && safeClass(child).orEmpty() == nodeClass
+            val sameNode = childBounds == nodeBounds && safeNodeClass(child).orEmpty() == nodeClass
             if (sameNode) continue
 
             val label = collectNodeTextLimited(child, maxNodes = 14, maxChars = 100)
@@ -523,15 +515,15 @@ class AutoActionService : AccessibilityService() {
 
         val flags = mutableListOf<String>()
 
-        try { if (node.isClickable) flags.add("click") } catch (_: Exception) {}
-        try { if (node.isLongClickable) flags.add("long") } catch (_: Exception) {}
-        try { if (node.isEditable) flags.add("edit") } catch (_: Exception) {}
-        try { if (node.isScrollable) flags.add("scroll") } catch (_: Exception) {}
-        try { if (node.isCheckable) flags.add("check") } catch (_: Exception) {}
-        try { if (node.isChecked) flags.add("checked") } catch (_: Exception) {}
-        try { if (node.isEnabled) flags.add("enabled") } catch (_: Exception) {}
-        try { if (node.isVisibleToUser) flags.add("visible") } catch (_: Exception) {}
-        try { if (node.isFocusable) flags.add("focus") } catch (_: Exception) {}
+        if (safeNodeRead(false) { node.isClickable }) flags.add("click")
+        if (safeNodeRead(false) { node.isLongClickable }) flags.add("long")
+        if (safeNodeRead(false) { node.isEditable }) flags.add("edit")
+        if (safeNodeRead(false) { node.isScrollable }) flags.add("scroll")
+        if (safeNodeRead(false) { node.isCheckable }) flags.add("check")
+        if (safeNodeRead(false) { node.isChecked }) flags.add("checked")
+        if (safeNodeRead(false) { node.isEnabled }) flags.add("enabled")
+        if (safeNodeRead(false) { node.isVisibleToUser }) flags.add("visible")
+        if (safeNodeRead(false) { node.isFocusable }) flags.add("focus")
 
         return flags.joinToString("|")
     }
@@ -558,23 +550,22 @@ class AutoActionService : AccessibilityService() {
         var depth = 0
 
         while (current != null && depth < 12) {
-            val cls = safeClass(current)?.substringAfterLast(".") ?: "N"
-            val parent = safeParent(current)
+            val cls = current.className?.toString()?.substringAfterLast(".") ?: "N"
+            val parent = safeNodeParent(current)
             if (parent === current) break
 
             var index = -1
 
             if (parent != null) {
                 val currentBounds = Rect()
-                safeBounds(current, currentBounds)
+                current.getBoundsInScreen(currentBounds)
 
-                val count = safeChildCount(parent)
-                for (i in 0 until count) {
-                    val child = safeChild(parent, i) ?: continue
+                for (i in 0 until safeNodeChildCount(parent)) {
+                    val child = safeNodeChild(parent, i) ?: continue
                     val childBounds = Rect()
-                    safeBounds(child, childBounds)
+                    child.getBoundsInScreen(childBounds)
 
-                    val sameClass = safeClass(child) == safeClass(current)
+                    val sameClass = child.className?.toString() == current.className?.toString()
                     val sameBounds = childBounds == currentBounds
 
                     if (sameClass && sameBounds) {
@@ -697,12 +688,12 @@ class AutoActionService : AccessibilityService() {
 
                 val node = stack.removeLast() ?: continue
 
-                if (!safeVisible(node) || !safeEnabled(node)) {
+                if (!node.isVisibleToUser || !node.isEnabled) {
                     continue
                 }
 
-                val text = safeText(node)?.trim()?.lowercase()
-                val desc = safeDesc(node)?.trim()?.lowercase()
+                val text = node.text?.toString()?.trim()?.lowercase()
+                val desc = node.contentDescription?.toString()?.trim()?.lowercase()
 
                 val exact =
                     text == wantedLower ||
@@ -710,7 +701,7 @@ class AutoActionService : AccessibilityService() {
 
                 if (exact) {
                     val clickable = findClickableParent(node) ?: node
-                    if (safeVisible(clickable) && safeEnabled(clickable)) {
+                    if (clickable.isVisibleToUser && clickable.isEnabled) {
                         val bounds = Rect()
                         clickable.getBoundsInScreen(bounds)
 
@@ -718,7 +709,7 @@ class AutoActionService : AccessibilityService() {
                             var score = 500
 
                             // Agar multiple same action mil jaye, screen ke visible/compact toolbar ko prefer karo.
-                            if (safeClickable(clickable)) score += 50
+                            if (clickable.isClickable) score += 50
 
                             // Old coordinate ko sirf tie-breaker banao, main condition nahi.
                             if (gesture.xPercent > 0f && gesture.yPercent > 0f) {
@@ -739,8 +730,8 @@ class AutoActionService : AccessibilityService() {
                     }
                 }
 
-                for (i in 0 until safeChildCount(node)) {
-                    val child = safeChild(node, i)
+                for (i in 0 until safeNodeChildCount(node)) {
+                    val child = safeNodeChild(node, i)
                     if (child != null) stack.add(child)
                 }
             }
@@ -751,94 +742,95 @@ class AutoActionService : AccessibilityService() {
 
 
     private fun findBestSmartTarget(gesture: RecordedGesture): SmartMatch? {
-        return try {
-            findExactActionButtonAcrossWindows(gesture)?.let {
-                return it
-            }
+        // 🔥 Toolbar action buttons: Copy/Cut/Paste/Share/Translate
+        // Inka order change ho sakta hai, isliye exact text ko sabse pehle dhoondo.
+        findExactActionButtonAcrossWindows(gesture)?.let {
+            return it
+        }
 
-            val screenW = resources.displayMetrics.widthPixels.toFloat().coerceAtLeast(1f)
-            val screenH = resources.displayMetrics.heightPixels.toFloat().coerceAtLeast(1f)
+        val screenW = resources.displayMetrics.widthPixels.toFloat().coerceAtLeast(1f)
+        val screenH = resources.displayMetrics.heightPixels.toFloat().coerceAtLeast(1f)
 
-            val fallbackX = if (gesture.xPercent > 0f) {
-                gesture.xPercent * screenW
-            } else {
-                gesture.points.firstOrNull()?.x ?: 0f
-            }
+        val fallbackX = if (gesture.xPercent > 0f) {
+            gesture.xPercent * screenW
+        } else {
+            gesture.points.firstOrNull()?.x ?: 0f
+        }
 
-            val fallbackY = if (gesture.yPercent > 0f) {
-                gesture.yPercent * screenH
-            } else {
-                gesture.points.firstOrNull()?.y ?: 0f
-            }
+        val fallbackY = if (gesture.yPercent > 0f) {
+            gesture.yPercent * screenH
+        } else {
+            gesture.points.firstOrNull()?.y ?: 0f
+        }
 
-            val root = getRealAppRootForPoint(fallbackX.toInt(), fallbackY.toInt()) ?: return null
+        val root = getRealAppRootForPoint(fallbackX.toInt(), fallbackY.toInt()) ?: return null
 
-            var best: SmartMatch? = null
-            val stack = java.util.ArrayDeque<AccessibilityNodeInfo>()
-            stack.add(root)
+        var best: SmartMatch? = null
+        val stack = java.util.ArrayDeque<AccessibilityNodeInfo>()
+        stack.add(root)
 
-            var visitedNodes = 0
+        var visitedNodes = 0
 
-            while (!stack.isEmpty() && visitedNodes < 900) {
-                visitedNodes++
-                val node = stack.removeLast()
+        while (!stack.isEmpty() && visitedNodes < 900) {
+            visitedNodes++
+            val node = stack.removeLast() ?: continue
 
-                val bounds = Rect()
-                if (safeBounds(node, bounds) && bounds.width() > 0 && bounds.height() > 0) {
-                    val score = scoreNode(node, bounds, gesture)
-                    if (score > 0) {
-                        val targetNode = findClickableParent(node) ?: node
-                        if (!safeVisible(targetNode) || !safeEnabled(targetNode)) {
-                            continue
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+
+            if (bounds.width() > 0 && bounds.height() > 0) {
+                val score = scoreNode(node, bounds, gesture)
+                if (score > 0) {
+                    val targetNode = findClickableParent(node) ?: node
+                    if (!targetNode.isVisibleToUser || !targetNode.isEnabled) {
+                        continue
+                    }
+
+                    val targetBounds = Rect()
+                    targetNode.getBoundsInScreen(targetBounds)
+
+                    if (targetBounds.width() > 0 && targetBounds.height() > 0) {
+                        var finalScore = score + if (targetNode.isClickable) 12 else 0
+
+                        // Recording mein button/clickable-parent ka size save hota hai.
+                        // Isliye final parent bounds par bhi size score do.
+                        if (gesture.targetWPercent > 0f && gesture.targetHPercent > 0f) {
+                            val wNow = targetBounds.width() / screenW
+                            val hNow = targetBounds.height() / screenH
+                            val wDiff = kotlin.math.abs(wNow - gesture.targetWPercent)
+                            val hDiff = kotlin.math.abs(hNow - gesture.targetHPercent)
+
+                            if (wDiff < 0.04f && hDiff < 0.04f) finalScore += 25
+                            else if (wDiff < 0.08f && hDiff < 0.08f) finalScore += 12
                         }
 
-                        val targetBounds = Rect()
-                        if (safeBounds(targetNode, targetBounds) &&
-                            targetBounds.width() > 0 &&
-                            targetBounds.height() > 0
-                        ) {
-                            var finalScore = score + if (safeClickable(targetNode)) 12 else 0
+                        // Duplicate Copy/Send jaise cases mein parent/current bounds ki position bhi use karo.
+                        if (gesture.xPercent > 0f && gesture.yPercent > 0f) {
+                            val cxP = targetBounds.exactCenterX() / screenW
+                            val cyP = targetBounds.exactCenterY() / screenH
+                            val dx = kotlin.math.abs(cxP - gesture.xPercent)
+                            val dy = kotlin.math.abs(cyP - gesture.yPercent)
 
-                            if (gesture.targetWPercent > 0f && gesture.targetHPercent > 0f) {
-                                val wNow = targetBounds.width() / screenW
-                                val hNow = targetBounds.height() / screenH
-                                val wDiff = kotlin.math.abs(wNow - gesture.targetWPercent)
-                                val hDiff = kotlin.math.abs(hNow - gesture.targetHPercent)
+                            if (dx < 0.06f && dy < 0.06f) finalScore += 35
+                            else if (dx < 0.16f && dy < 0.16f) finalScore += 18
+                            else if (dx < 0.30f && dy < 0.30f) finalScore += 8
+                        }
 
-                                if (wDiff < 0.04f && hDiff < 0.04f) finalScore += 25
-                                else if (wDiff < 0.08f && hDiff < 0.08f) finalScore += 12
-                            }
-
-                            if (gesture.xPercent > 0f && gesture.yPercent > 0f) {
-                                val cxP = targetBounds.exactCenterX() / screenW
-                                val cyP = targetBounds.exactCenterY() / screenH
-                                val dx = kotlin.math.abs(cxP - gesture.xPercent)
-                                val dy = kotlin.math.abs(cyP - gesture.yPercent)
-
-                                if (dx < 0.06f && dy < 0.06f) finalScore += 35
-                                else if (dx < 0.16f && dy < 0.16f) finalScore += 18
-                                else if (dx < 0.30f && dy < 0.30f) finalScore += 8
-                            }
-
-                            if (best == null || finalScore > best!!.score) {
-                                best = SmartMatch(targetNode, Rect(targetBounds), finalScore)
-                            }
+                        if (best == null || finalScore > best!!.score) {
+                            best = SmartMatch(targetNode, Rect(targetBounds), finalScore)
                         }
                     }
                 }
-
-                val count = safeChildCount(node)
-                for (i in 0 until count) {
-                    val child = safeChild(node, i)
-                    if (child != null) stack.add(child)
-                }
             }
 
-            val finalBest = best ?: return null
-            if (finalBest.score >= 55) finalBest else null
-        } catch (_: Exception) {
-            null
+            for (i in 0 until safeNodeChildCount(node)) {
+                val child = safeNodeChild(node, i)
+                if (child != null) stack.add(child)
+            }
         }
+
+        val finalBest = best ?: return null
+        return if (finalBest.score >= 55) finalBest else null
     }
 
     private fun scoreNode(
@@ -846,156 +838,160 @@ class AutoActionService : AccessibilityService() {
         bounds: Rect,
         gesture: RecordedGesture
     ): Int {
-        return try {
-            if (!safeVisible(node) || !safeEnabled(node)) return 0
+        if (!node.isVisibleToUser || !node.isEnabled) return 0
 
-            // FAST EXIT: no saved identity means smart-target scoring is useless.
-            val hasAnyIdentity =
-                !gesture.targetId.isNullOrBlank() ||
-                !gesture.targetText.isNullOrBlank() ||
-                !gesture.targetDesc.isNullOrBlank() ||
-                !gesture.targetClass.isNullOrBlank() ||
-                !gesture.targetContextText.isNullOrBlank() ||
-                !gesture.targetChildText.isNullOrBlank() ||
-                !gesture.targetSiblingText.isNullOrBlank() ||
-                !gesture.targetRoleFlags.isNullOrBlank() ||
-                !gesture.targetTreePath.isNullOrBlank() ||
-                gesture.targetWPercent > 0f
+        var score = 0
 
-            if (!hasAnyIdentity) return 0
+        val contextNodeForUltra = findClickableParent(node) ?: node
+        val contextSimUltra = tokenSimilarity(
+            gesture.targetContextText,
+            collectNodeTextLimited(contextNodeForUltra, 45, 420)
+        )
+        val childSimUltra = tokenSimilarity(
+            gesture.targetChildText,
+            collectNodeTextLimited(node, 25, 220)
+        )
+        val siblingSimUltra = tokenSimilarity(
+            gesture.targetSiblingText,
+            collectSiblingText(contextNodeForUltra, 300)
+        )
+        val roleSimUltra = roleSimilarity(
+            gesture.targetRoleFlags,
+            roleFlagsOf(contextNodeForUltra)
+        )
+        val dnaSimUltra = dnaSimilarity(
+            gesture.targetTreePath,
+            extractTreePathDNA(contextNodeForUltra)
+        )
 
-            var score = 0
+        if (contextSimUltra >= 0.85f) score += 65
+        else if (contextSimUltra >= 0.60f) score += 35
 
-            val contextNodeForUltra = findClickableParent(node) ?: node
-            val contextSimUltra = tokenSimilarity(
-                gesture.targetContextText,
-                collectNodeTextLimited(contextNodeForUltra, 45, 420)
-            )
-            val childSimUltra = tokenSimilarity(
-                gesture.targetChildText,
-                collectNodeTextLimited(node, 25, 220)
-            )
-            val siblingSimUltra = tokenSimilarity(
-                gesture.targetSiblingText,
-                collectSiblingText(contextNodeForUltra, 300)
-            )
-            val roleSimUltra = roleSimilarity(
-                gesture.targetRoleFlags,
-                roleFlagsOf(contextNodeForUltra)
-            )
-            val dnaSimUltra = dnaSimilarity(
-                gesture.targetTreePath,
-                extractTreePathDNA(contextNodeForUltra)
-            )
+        if (childSimUltra >= 0.85f) score += 35
+        else if (childSimUltra >= 0.60f) score += 18
 
-            if (contextSimUltra >= 0.85f) score += 65
-            else if (contextSimUltra >= 0.60f) score += 35
+        if (siblingSimUltra >= 0.85f) score += 30
+        else if (siblingSimUltra >= 0.60f) score += 14
 
-            if (childSimUltra >= 0.85f) score += 35
-            else if (childSimUltra >= 0.60f) score += 18
+        if (roleSimUltra >= 0.75f) score += 15
 
-            if (siblingSimUltra >= 0.85f) score += 30
-            else if (siblingSimUltra >= 0.60f) score += 14
+        if (dnaSimUltra >= 0.90f) score += 55
+        else if (dnaSimUltra >= 0.70f) score += 28
+        else if (dnaSimUltra >= 0.50f) score += 12
 
-            if (roleSimUltra >= 0.75f) score += 15
+        val nodeText = node.text?.toString()?.trim()
+        val nodeDesc = node.contentDescription?.toString()?.trim()
+        val nodeId = node.viewIdResourceName?.trim()
+        val nodeClass = node.className?.toString()?.trim()
 
-            if (dnaSimUltra >= 0.90f) score += 55
-            else if (dnaSimUltra >= 0.70f) score += 28
-            else if (dnaSimUltra >= 0.50f) score += 12
-
-            val nodeText = safeText(node)?.trim()
-            val nodeDesc = safeDesc(node)?.trim()
-            val nodeId = safeId(node)?.trim()
-            val nodeClass = safeClass(node)?.trim()
-
-            if (!gesture.targetId.isNullOrBlank() && nodeId == gesture.targetId) {
-                score += 100
-            }
-
-            val exactDescMatch =
-                !gesture.targetDesc.isNullOrBlank() &&
-                nodeDesc?.equals(gesture.targetDesc, ignoreCase = true) == true
-
-            if (exactDescMatch) score += 90
-
-            val exactTextMatch =
-                !gesture.targetText.isNullOrBlank() &&
-                nodeText?.equals(gesture.targetText, ignoreCase = true) == true
-
-            if (exactTextMatch) score += 90
-
-            if (!exactTextMatch &&
-                !gesture.targetText.isNullOrBlank() &&
-                nodeText?.contains(gesture.targetText, ignoreCase = true) == true
-            ) {
-                score += 45
-            }
-
-            if (!exactDescMatch &&
-                !gesture.targetDesc.isNullOrBlank() &&
-                nodeDesc?.contains(gesture.targetDesc, ignoreCase = true) == true
-            ) {
-                score += 45
-            }
-
-            if (!gesture.targetClass.isNullOrBlank() && !nodeClass.isNullOrBlank()) {
-                val savedSimple = gesture.targetClass.substringAfterLast('.').lowercase()
-                val nowSimple = nodeClass.substringAfterLast('.').lowercase()
-
-                if (savedSimple == nowSimple ||
-                    (savedSimple.contains("button") && nowSimple.contains("button")) ||
-                    (savedSimple.contains("text") && nowSimple.contains("text")) ||
-                    (savedSimple.contains("image") && nowSimple.contains("image"))
-                ) {
-                    score += 18
-                }
-            }
-
-            val screenW = resources.displayMetrics.widthPixels.toFloat().coerceAtLeast(1f)
-            val screenH = resources.displayMetrics.heightPixels.toFloat().coerceAtLeast(1f)
-
-            val wPercentNow = bounds.width() / screenW
-            val hPercentNow = bounds.height() / screenH
-
-            if (gesture.targetWPercent > 0f && gesture.targetHPercent > 0f) {
-                val wDiff = abs(wPercentNow - gesture.targetWPercent)
-                val hDiff = abs(hPercentNow - gesture.targetHPercent)
-
-                if (wDiff < 0.04f && hDiff < 0.04f) score += 20
-                else if (wDiff < 0.08f && hDiff < 0.08f) score += 10
-            }
-
-            if (gesture.xPercent > 0f && gesture.yPercent > 0f) {
-                val cxP = bounds.exactCenterX() / screenW
-                val cyP = bounds.exactCenterY() / screenH
-
-                val dx = abs(cxP - gesture.xPercent)
-                val dy = abs(cyP - gesture.yPercent)
-
-                if (dx < 0.05f && dy < 0.05f) score += 60
-                else if (dx < 0.15f && dy < 0.15f) score += 30
-                else if (dx < 0.28f && dy < 0.28f) score += 10
-                else if (dx > 0.40f || dy > 0.40f) {
-                    val strongIdentity =
-                        (!gesture.targetId.isNullOrBlank() && nodeId == gesture.targetId) ||
-                        exactTextMatch ||
-                        exactDescMatch ||
-                        contextSimUltra >= 0.70f ||
-                        childSimUltra >= 0.70f ||
-                        siblingSimUltra >= 0.70f ||
-                        dnaSimUltra >= 0.80f
-
-                    score -= if (strongIdentity) 0 else 45
-                }
-            }
-
-            if (safeClickable(node)) score += 8
-
-
-            score
-        } catch (_: Exception) {
-            0
+        // Strong identity
+        if (!gesture.targetId.isNullOrBlank() && nodeId == gesture.targetId) {
+            score += 100
         }
+
+        val exactDescMatch =
+            !gesture.targetDesc.isNullOrBlank() &&
+            nodeDesc?.equals(gesture.targetDesc, ignoreCase = true) == true
+
+        if (exactDescMatch) {
+            score += 90
+        }
+
+        val exactTextMatch =
+            !gesture.targetText.isNullOrBlank() &&
+            nodeText?.equals(gesture.targetText, ignoreCase = true) == true
+
+        if (exactTextMatch) {
+            score += 90
+        }
+
+        // Medium identity
+        if (!exactTextMatch &&
+            !gesture.targetText.isNullOrBlank() &&
+            nodeText?.contains(gesture.targetText, ignoreCase = true) == true
+        ) {
+            score += 45
+        }
+
+        if (!exactDescMatch &&
+            !gesture.targetDesc.isNullOrBlank() &&
+            nodeDesc?.contains(gesture.targetDesc, ignoreCase = true) == true
+        ) {
+            score += 45
+        }
+
+        // Icon/button fingerprint
+        if (!gesture.targetClass.isNullOrBlank() && !nodeClass.isNullOrBlank()) {
+            val savedSimple = gesture.targetClass.substringAfterLast('.').lowercase()
+            val nowSimple = nodeClass.substringAfterLast('.').lowercase()
+
+            if (savedSimple == nowSimple ||
+                (savedSimple.contains("button") && nowSimple.contains("button")) ||
+                (savedSimple.contains("text") && nowSimple.contains("text")) ||
+                (savedSimple.contains("image") && nowSimple.contains("image"))
+            ) {
+                score += 18
+            }
+        }
+
+        val screenW = resources.displayMetrics.widthPixels.toFloat().coerceAtLeast(1f)
+        val screenH = resources.displayMetrics.heightPixels.toFloat().coerceAtLeast(1f)
+
+        val wPercentNow = bounds.width() / screenW
+        val hPercentNow = bounds.height() / screenH
+
+        if (gesture.targetWPercent > 0f && gesture.targetHPercent > 0f) {
+            val wDiff = abs(wPercentNow - gesture.targetWPercent)
+            val hDiff = abs(hPercentNow - gesture.targetHPercent)
+
+            if (wDiff < 0.04f && hDiff < 0.04f) score += 20
+            else if (wDiff < 0.08f && hDiff < 0.08f) score += 10
+        }
+
+        // Relative position: button thoda shift ho sakta hai, isliye soft score
+        if (gesture.xPercent > 0f && gesture.yPercent > 0f) {
+            val cxP = bounds.exactCenterX() / screenW
+            val cyP = bounds.exactCenterY() / screenH
+
+            val dx = abs(cxP - gesture.xPercent)
+            val dy = abs(cyP - gesture.yPercent)
+
+            if (dx < 0.05f && dy < 0.05f) score += 60
+            else if (dx < 0.15f && dy < 0.15f) score += 30
+            else if (dx < 0.28f && dy < 0.28f) score += 10
+            else if (dx > 0.40f || dy > 0.40f) {
+                val strongIdentity =
+                    (!gesture.targetId.isNullOrBlank() && nodeId == gesture.targetId) ||
+                    exactTextMatch ||
+                    exactDescMatch ||
+                    contextSimUltra >= 0.70f ||
+                    childSimUltra >= 0.70f ||
+                    siblingSimUltra >= 0.70f ||
+                    dnaSimUltra >= 0.80f
+
+                score -= if (strongIdentity) 0 else 45
+            }
+        }
+
+        if (node.isClickable) score += 8
+        // Parent traversal scoring removed; candidate normalization happens in findBestSmartTarget().
+
+        // Agar kuch bhi identity nahi hai, sirf random coordinate par trust mat karo.
+        val hasAnyIdentity =
+            !gesture.targetId.isNullOrBlank() ||
+            !gesture.targetText.isNullOrBlank() ||
+            !gesture.targetDesc.isNullOrBlank() ||
+            !gesture.targetClass.isNullOrBlank() ||
+            !gesture.targetContextText.isNullOrBlank() ||
+            !gesture.targetChildText.isNullOrBlank() ||
+            !gesture.targetSiblingText.isNullOrBlank() ||
+            !gesture.targetRoleFlags.isNullOrBlank() ||
+            !gesture.targetTreePath.isNullOrBlank() ||
+            gesture.targetWPercent > 0f
+
+        if (!hasAnyIdentity) return 0
+
+        return score
     }
 
     private fun hasRealMovement(points: List<GesturePoint>): Boolean {
@@ -1111,6 +1107,11 @@ class AutoActionService : AccessibilityService() {
             ).show()
         }
     }
+
+    private fun getRealAppRoot(): AccessibilityNodeInfo? {
+        return getRealAppRootForPoint(null, null)
+    }
+
     private fun getRealAppRootForPoint(tapX: Int?, tapY: Int?): AccessibilityNodeInfo? {
         val myPackage = packageName
         var bestRoot: AccessibilityNodeInfo? = null
@@ -1178,16 +1179,16 @@ class AutoActionService : AccessibilityService() {
         val clickNode = findClickableParent(touchedNode) ?: touchedNode
 
         val bounds = Rect()
-        safeBounds(clickNode, bounds)
+        clickNode.getBoundsInScreen(bounds)
 
         val safeW = screenW.coerceAtLeast(1f)
         val safeH = screenH.coerceAtLeast(1f)
 
         return TargetSnapshot(
-            targetText = safeText(clickNode) ?: safeText(touchedNode),
-            targetDesc = safeDesc(clickNode) ?: safeDesc(touchedNode),
-            targetId = safeId(clickNode) ?: safeId(touchedNode),
-            targetClass = safeClass(clickNode) ?: safeClass(touchedNode),
+            targetText = clickNode.text?.toString() ?: touchedNode.text?.toString(),
+            targetDesc = clickNode.contentDescription?.toString() ?: touchedNode.contentDescription?.toString(),
+            targetId = clickNode.viewIdResourceName ?: touchedNode.viewIdResourceName,
+            targetClass = clickNode.className?.toString() ?: touchedNode.className?.toString(),
 
             targetContextText = collectNodeTextLimited(clickNode, 45, 420),
             targetChildText = collectNodeTextLimited(touchedNode, 25, 220),
@@ -1204,9 +1205,7 @@ class AutoActionService : AccessibilityService() {
             targetWPercent = bounds.width() / safeW,
             targetHPercent = bounds.height() / safeH,
             insideXPercent = if (bounds.width() > 0) ((x - bounds.left).toFloat() / bounds.width()).coerceIn(0f, 1f) else 0.5f,
-            insideYPercent = if (bounds.height() > 0) ((y - bounds.top).toFloat() / bounds.height()).coerceIn(0f, 1f) else 0.5f,
-            recordedScreenW = safeW.toInt(),
-            recordedScreenH = safeH.toInt()
+            insideYPercent = if (bounds.height() > 0) ((y - bounds.top).toFloat() / bounds.height()).coerceIn(0f, 1f) else 0.5f
         )
     }
 
@@ -1217,53 +1216,50 @@ class AutoActionService : AccessibilityService() {
     ): AccessibilityNodeInfo? {
         if (root == null) return null
 
-        return try {
-            val stack = java.util.ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
-            stack.add(Pair(root, 0))
+        val stack = java.util.ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
+        stack.add(Pair(root, 0))
 
-            var bestNode: AccessibilityNodeInfo? = null
-            var bestScore = Int.MIN_VALUE
+        var bestNode: AccessibilityNodeInfo? = null
+        var bestScore = Int.MIN_VALUE
 
-            while (!stack.isEmpty()) {
-                val item = stack.removeLast()
-                val node = item.first
-                val depth = item.second
+        while (!stack.isEmpty()) {
+            val item = stack.removeLast()
+            val node = item.first
+            val depth = item.second
 
-                val bounds = Rect()
-                if (!safeBounds(node, bounds)) continue
+            val bounds = Rect()
+            if (!safeNodeBounds(node, bounds)) continue
 
-                if (bounds.contains(x, y)) {
-                    val area = (bounds.width() * bounds.height()).coerceAtLeast(1)
-                    val clickableBonus = if (safeClickable(node)) 800 else 0
-                    val leafBonus = if (safeChildCount(node) == 0) 300 else 0
-                    val smallAreaBonus = 500000 / area.coerceAtLeast(1)
+            if (bounds.contains(x, y)) {
+                val area = (bounds.width() * bounds.height()).coerceAtLeast(1)
+                val clickableBonus = if (safeNodeClickable(node)) 800 else 0
+                val leafBonus = if (safeNodeChildCount(node) == 0) 300 else 0
+                val smallAreaBonus = 500000 / area.coerceAtLeast(1)
 
-                    val candidateScore =
-                        (depth * 1000) +
-                        clickableBonus +
-                        leafBonus +
-                        smallAreaBonus
+                val candidateScore =
+                    (depth * 1000) +
+                    clickableBonus +
+                    leafBonus +
+                    smallAreaBonus
 
-                    if (candidateScore > bestScore) {
-                        bestScore = candidateScore
-                        bestNode = node
-                    }
+                if (candidateScore > bestScore) {
+                    bestScore = candidateScore
+                    bestNode = node
+                }
 
-                    val count = safeChildCount(node)
-                    for (i in 0 until count) {
-                        val child = safeChild(node, i)
-                        if (child != null) {
-                            stack.add(Pair(child, depth + 1))
-                        }
+                val count = safeNodeChildCount(node)
+                for (i in 0 until count) {
+                    val child = safeNodeChild(node, i)
+                    if (child != null) {
+                        stack.add(Pair(child, depth + 1))
                     }
                 }
             }
-
-            bestNode
-        } catch (_: Exception) {
-            null
         }
+
+        return bestNode
     }
+
 
     private fun performHybridSelectionRetry(
         startX: Float,
@@ -1439,7 +1435,6 @@ class AutoActionService : AccessibilityService() {
                 hasLine = true
             }
         }
-
         if (!hasLine) {
             path.lineTo((safeX + 1f).coerceIn(2f, screenW), (safeY + 1f).coerceIn(2f, screenH))
         }
@@ -1447,91 +1442,73 @@ class AutoActionService : AccessibilityService() {
         val normalBuilder = GestureDescription.Builder().apply {
             addStroke(GestureDescription.StrokeDescription(path, 0L, holdDuration))
         }
-
         dispatchBuilder(normalBuilder) { completed ->
             finishOnce(completed && isCurrentCallbackRun(runId))
         }
     }
 
-    private fun isSelectionUiVisibleHybrid(): Boolean {
-        return try {
-            val roots = mutableListOf<AccessibilityNodeInfo>()
+        private fun isSelectionUiVisibleHybrid(): Boolean {
+        val roots = mutableListOf<AccessibilityNodeInfo>()
 
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+            try {
+                for (window in windows) {
+                    if (window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue
+                    val root = window.root ?: continue
+                    roots.add(root)
+                }
+            } catch (_: Exception) {
+            }
+        }
+
+        rootInActiveWindow?.let { roots.add(it) }
+        if (roots.isEmpty()) return false
+
+        val markers = listOf(
+            "copy", "select", "select all", "cut", "paste", "share", "translate",
+            "कॉपी", "चुनें", "सब चुनें", "कट", "पेस्ट", "अनुवाद",
+            "نسخ", "چنیں", "سب منتخب", "قص", "چسپاں", "ترجمہ"
+        )
+
+        var visited = 0
+        for (root in roots) {
+            val stack = java.util.ArrayDeque<AccessibilityNodeInfo>()
+            stack.add(root)
+
+            while (!stack.isEmpty() && visited < 1600) {
+                visited++
+                val node = stack.removeLast()
+
                 try {
-                    for (window in windows) {
-                        if (window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue
-                        val root = window.root ?: continue
-                        roots.add(root)
-                    }
+                    if (node.textSelectionStart >= 0 &&
+                        node.textSelectionEnd >= 0 &&
+                        node.textSelectionStart != node.textSelectionEnd
+                    ) return true
                 } catch (_: Exception) {
                 }
-            }
 
-            rootInActiveWindow?.let { active ->
-                val activeBounds = Rect()
-                if (safeBounds(active, activeBounds)) {
-                    val alreadyAdded = roots.any { root ->
-                        val rootBounds = Rect()
-                        safeBounds(root, rootBounds) && rootBounds == activeBounds
-                    }
-                    if (!alreadyAdded) roots.add(active)
+                if (node.isSelected) return true
+
+                val text = node.text?.toString()?.lowercase() ?: ""
+                val desc = node.contentDescription?.toString()?.lowercase() ?: ""
+                val id = node.viewIdResourceName?.lowercase() ?: ""
+                val label = "$text $desc $id"
+
+                if (label.contains("floating_toolbar") || label.contains("selection")) return true
+                if (node.isVisibleToUser && (node.isClickable || node.isFocusable)) {
+                    if (markers.any { label.contains(it) }) return true
+                }
+
+                for (i in 0 until safeNodeChildCount(node)) {
+                    val child = safeNodeChild(node, i)
+                    if (child != null) stack.add(child)
                 }
             }
-            if (roots.isEmpty()) return false
-
-            val markers = listOf(
-                "copy", "select", "select all", "cut", "paste", "share", "translate",
-                "कॉपी", "चुनें", "सब चुनें", "कट", "पेस्ट", "अनुवाद",
-                "نسخ", "چنیں", "سب منتخب", "قص", "چسپاں", "ترجمہ"
-            )
-
-            var visited = 0
-            for (root in roots) {
-                val stack = java.util.ArrayDeque<AccessibilityNodeInfo>()
-                stack.add(root)
-
-                while (!stack.isEmpty() && visited < 1600) {
-                    visited++
-                    val node = stack.removeLast()
-
-                    try {
-                        if (node.textSelectionStart >= 0 &&
-                            node.textSelectionEnd >= 0 &&
-                            node.textSelectionStart != node.textSelectionEnd
-                        ) return true
-                    } catch (_: Exception) {
-                    }
-
-                    try {
-                        if (node.isSelected) return true
-                    } catch (_: Exception) {
-                    }
-
-                    val text = safeText(node)?.lowercase() ?: ""
-                    val desc = safeDesc(node)?.lowercase() ?: ""
-                    val id = safeId(node)?.lowercase() ?: ""
-                    val label = "$text $desc $id"
-
-                    if (label.contains("floating_toolbar") || label.contains("selection")) return true
-                    if (safeVisible(node)) {
-                        val clickableOrFocusable = try { node.isClickable || node.isFocusable } catch (_: Exception) { false }
-                        if (clickableOrFocusable && markers.any { label.contains(it) }) return true
-                    }
-
-                    val count = safeChildCount(node)
-                    for (i in 0 until count) {
-                        val child = safeChild(node, i)
-                        if (child != null) stack.add(child)
-                    }
-                }
-            }
-
-            false
-        } catch (_: Exception) {
-            false
         }
+
+        return false
     }
+
 
     private fun findClickableParent(
         node: AccessibilityNodeInfo?
@@ -1540,8 +1517,8 @@ class AutoActionService : AccessibilityService() {
         var depth = 0
 
         while (current != null && depth < 30) {
-            if (safeClickable(current)) return current
-            val next = safeParent(current)
+            if (safeNodeClickable(current)) return current
+            val next = safeNodeParent(current)
             if (next == current) return null
             current = next
             depth++
