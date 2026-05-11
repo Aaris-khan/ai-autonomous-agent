@@ -479,24 +479,11 @@ object GestureStore {
 
     fun clear(context: Context) {
         val active = getActiveConfigName(context)
-        val p = prefs(context)
-
-        val editor = p.edit()
+        val editor = prefs(context).edit()
             .remove(currentGestureKey(context))
             .remove(nextKeyForName(active))
             .putString(loopModeKeyForName(active), "ONCE")
             .putInt(loopValueKeyForName(active), 1)
-
-        // Ghost Link Fix:
-        // Agar kisi aur config ka next link is active config par aa raha tha,
-        // to recording clear hone par woh stale incoming link bhi remove karo.
-        getAllConfigNames(context).forEach { configName ->
-            val key = nextKeyForName(configName)
-            val next = p.getString(key, null)
-            if (normalizeConfigName(next) == active) {
-                editor.remove(key)
-            }
-        }
 
         if (active == DEFAULT_CONFIG) {
             editor.remove(KEY_GESTURES)

@@ -733,7 +733,6 @@ class FloatingControlService : Service() {
                 GestureStore.setActiveConfigName(this, name)
                 refreshConfigLabel()
                 if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
-                if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
 
                 unsavedGestures = emptyList()
                 glassHiddenAt = 0L

@@ -81,9 +81,6 @@ class AutoActionService : AccessibilityService() {
 
     private var loopStartTime = 0L
     private var loopCurrentCount = 0
-    private var initialConfigName = ""
-    private var currentPlayingConfig = ""
-    private val chainVisitedInRun = linkedSetOf<String>()
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -102,11 +99,9 @@ class AutoActionService : AccessibilityService() {
 
         super.onDestroy()
     }
-    private fun playRecordedGestures(): Boolean {
-        initialConfigName = GestureStore.getActiveConfigName(this)
-        currentPlayingConfig = initialConfigName
 
-        val gestures = GestureStore.loadConfig(this, currentPlayingConfig)
+    private fun playRecordedGestures(): Boolean {
+        val gestures = GestureStore.load(this)
 
         if (gestures.isEmpty()) {
             Toast.makeText(this, "Saved Screen Command nahi mila", Toast.LENGTH_SHORT).show()
@@ -116,14 +111,12 @@ class AutoActionService : AccessibilityService() {
         stopPlaybackInternal(showToast = false)
         val runId = playbackRunId.incrementAndGet()
         activeGestureCount.set(0)
-        chainVisitedInRun.clear()
-        chainVisitedInRun.add(initialConfigName)
         isPlayingInternal = true
 
         loopCurrentCount = 0
         loopStartTime = android.os.SystemClock.elapsedRealtime()
 
-        Toast.makeText(this, "Workflow start: $currentPlayingConfig", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Screen Command start", Toast.LENGTH_SHORT).show()
 
         playSequence(gestures, runId)
         return true
@@ -138,38 +131,10 @@ class AutoActionService : AccessibilityService() {
         fun finishSequence() {
             if (!isSamePlaybackRun(runId)) return
 
-            val nextConfig = GestureStore.getNextConfig(this@AutoActionService, currentPlayingConfig)
-
-            if (!nextConfig.isNullOrBlank() && !chainVisitedInRun.contains(nextConfig)) {
-                val nextGestures = GestureStore.loadConfig(this@AutoActionService, nextConfig)
-
-                if (nextGestures.isNotEmpty()) {
-                    currentPlayingConfig = nextConfig
-                    chainVisitedInRun.add(nextConfig)
-
-                    scheduledTasks.forEach { handler.removeCallbacks(it) }
-                    scheduledTasks.clear()
-
-                    val nextTask = object : Runnable {
-                        override fun run() {
-                            scheduledTasks.remove(this)
-                            if (isSamePlaybackRun(runId)) {
-                                Toast.makeText(this@AutoActionService, "Next: $nextConfig", Toast.LENGTH_SHORT).show()
-                                playSequence(nextGestures, runId)
-                            }
-                        }
-                    }
-
-                    scheduledTasks.add(nextTask)
-                    handler.postDelayed(nextTask, 500L)
-                    return
-                }
-            }
-
             loopCurrentCount++
 
-            val mode = GestureStore.getLoopModeForConfig(this@AutoActionService, initialConfigName)
-            val value = GestureStore.getLoopValueForConfig(this@AutoActionService, initialConfigName)
+            val mode = GestureStore.getLoopMode(this)
+            val value = GestureStore.getLoopValue(this)
 
             val shouldContinue = when (mode) {
                 "ONCE" -> false
@@ -186,38 +151,22 @@ class AutoActionService : AccessibilityService() {
                 scheduledTasks.forEach { handler.removeCallbacks(it) }
                 scheduledTasks.clear()
 
-                currentPlayingConfig = initialConfigName
-                chainVisitedInRun.clear()
-                chainVisitedInRun.add(initialConfigName)
-
-                val firstGestures = GestureStore.loadConfig(this@AutoActionService, initialConfigName)
-
-                if (firstGestures.isEmpty()) {
-                    isPlayingInternal = false
-                    activeGestureCount.set(0)
-                    Toast.makeText(this@AutoActionService, "Workflow start config empty hai", Toast.LENGTH_SHORT).show()
-                    return
-                }
-
-                val loopTask = object : Runnable {
+                val loopCooldownTask = object : Runnable {
                     override fun run() {
                         scheduledTasks.remove(this)
                         if (isSamePlaybackRun(runId)) {
-                            Toast.makeText(this@AutoActionService, "Loop restart", Toast.LENGTH_SHORT).show()
-                            playSequence(firstGestures, runId)
+                            playSequence(orderedGestures, runId)
                         }
                     }
                 }
-
-                scheduledTasks.add(loopTask)
-                handler.postDelayed(loopTask, 700L)
+                scheduledTasks.add(loopCooldownTask)
+                handler.postDelayed(loopCooldownTask, 700L)
             } else if (isCurrentCallbackRun(runId)) {
                 isPlayingInternal = false
                 scheduledTasks.forEach { handler.removeCallbacks(it) }
                 scheduledTasks.clear()
                 activeGestureCount.set(0)
-                chainVisitedInRun.clear()
-                Toast.makeText(this@AutoActionService, "Workflow complete", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Screen Command complete", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -1614,8 +1563,6 @@ class AutoActionService : AccessibilityService() {
             event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN
 
         if (fcs != null && fcs.isRecordingActive() && isVolumeKey) {
-            // ACTION_DOWN + ACTION_UP dono consume karo,
-            // warna Android ka volume slider pop-up aa sakta hai.
             if (event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                 val ok = if (event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP) {
                     fcs.recordSystemAction(1)
@@ -1624,10 +1571,8 @@ class AutoActionService : AccessibilityService() {
                     fcs.recordSystemAction(2)
                     performGlobalAction(GLOBAL_ACTION_RECENTS)
                 }
-
                 if (!ok) showTinyToast("Volume system action fail hua")
             }
-
             return true
         }
 

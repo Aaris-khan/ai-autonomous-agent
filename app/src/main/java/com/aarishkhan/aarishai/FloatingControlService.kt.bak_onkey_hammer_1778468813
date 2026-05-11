@@ -733,7 +733,6 @@ class FloatingControlService : Service() {
                 GestureStore.setActiveConfigName(this, name)
                 refreshConfigLabel()
                 if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
-                if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
 
                 unsavedGestures = emptyList()
                 glassHiddenAt = 0L
@@ -945,7 +944,7 @@ class FloatingControlService : Service() {
     }
 
     // ✅ EXACT NAVIGATION GAP FIX
-    private fun extractAndAppendGestures() {
+        private fun extractAndAppendGestures() {
         val view = captureView ?: return
         val newGestures = view.getRecordedGestures()
             .filter { it.points.isNotEmpty() }
@@ -957,21 +956,22 @@ class FloatingControlService : Service() {
             g.delayFromStart.coerceAtLeast(0L) + (g.points.lastOrNull()?.t ?: 0L).coerceAtLeast(0L)
         } ?: 0L
 
-        val navigationGap = if (unsavedGestures.isNotEmpty() && glassHiddenAt > 0L) {
-            (view.getRecordingStartTime() - glassHiddenAt)
-                .coerceAtLeast(0L)
-                .coerceAtMost(120000L)
+        val overrideGap = nextNavigationGapOverride
+        val navigationGap = if (unsavedGestures.isNotEmpty()) {
+            (overrideGap ?: if (glassHiddenAt > 0L) {
+                view.getRecordingStartTime() - glassHiddenAt
+            } else {
+                0L
+            }).coerceAtLeast(0L).coerceAtMost(120000L)
         } else {
             0L
         }
+        nextNavigationGapOverride = null
 
         val timeOffset = if (unsavedGestures.isEmpty()) 0L else lastGestureEnd + navigationGap
-
         unsavedGestures = (unsavedGestures + newGestures.map { g ->
             g.copy(delayFromStart = (g.delayFromStart + timeOffset).coerceAtLeast(0L))
         }).sortedBy { it.delayFromStart }
-
-        nextNavigationGapOverride = null
     }
 
         private fun handleStartButton() {
@@ -1110,10 +1110,8 @@ class FloatingControlService : Service() {
                 glassHiddenAt = 0L
                 nextNavigationGapOverride = null
             } else {
-                // Undo Time-Freeze Fix:
-                // Purana gap preserve rahega + naya wait time bhi live add hota rahega.
-                glassHiddenAt = android.os.SystemClock.uptimeMillis() - preservedGap
-                nextNavigationGapOverride = null
+                glassHiddenAt = android.os.SystemClock.uptimeMillis()
+                nextNavigationGapOverride = preservedGap
             }
 
             val hasOld = GestureStore.hasRecording(this)

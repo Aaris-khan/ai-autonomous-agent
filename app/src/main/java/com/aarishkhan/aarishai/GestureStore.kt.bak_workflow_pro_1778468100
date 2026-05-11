@@ -63,6 +63,7 @@ data class RecordedGesture(
 object GestureStore {
     private const val PREF_NAME = "screen_command_store"
 
+    // Old key ko rakho, taaki purani saved recording gayab na ho.
     private const val KEY_GESTURES = "recorded_gestures"
 
     private const val KEY_LOOP_MODE = "loop_mode"
@@ -72,7 +73,6 @@ object GestureStore {
     private const val KEY_CONFIG_LIST = "config_list_json"
     private const val DEFAULT_CONFIG = "Default Config"
     private const val CONFIG_KEY_PREFIX = "config_"
-    private const val KEY_NEXT_CONFIG_PREFIX = "next_config_"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -94,18 +94,6 @@ object GestureStore {
 
     private fun currentGestureKey(context: Context): String {
         return configKey(getActiveConfigName(context))
-    }
-
-    private fun loopModeKeyForName(name: String): String {
-        return KEY_LOOP_MODE + "_" + normalizeConfigName(name)
-    }
-
-    private fun loopValueKeyForName(name: String): String {
-        return KEY_LOOP_VALUE + "_" + normalizeConfigName(name)
-    }
-
-    private fun nextKeyForName(name: String): String {
-        return KEY_NEXT_CONFIG_PREFIX + normalizeConfigName(name)
     }
 
     fun getActiveConfigName(context: Context): String {
@@ -157,22 +145,21 @@ object GestureStore {
         setActiveConfigName(context, getActiveConfigName(context))
     }
 
-    private fun loadJsonForConfig(context: Context, configName: String): String? {
+    private fun loadJsonForActiveConfig(context: Context): String? {
         val p = prefs(context)
-        val safeName = normalizeConfigName(configName)
-        val modern = p.getString(configKey(safeName), null)
+        val activeName = getActiveConfigName(context)
+        val modern = p.getString(configKey(activeName), null)
 
         if (!modern.isNullOrBlank()) return modern
 
-        return if (safeName == DEFAULT_CONFIG) {
+        // ✅ Migration fallback:
+        // Agar user ka old saved macro KEY_GESTURES mein pada hai,
+        // to Default Config mein woh still load hoga.
+        return if (activeName == DEFAULT_CONFIG) {
             p.getString(KEY_GESTURES, null)
         } else {
             null
         }
-    }
-
-    private fun loadJsonForActiveConfig(context: Context): String? {
-        return loadJsonForConfig(context, getActiveConfigName(context))
     }
 
     fun save(context: Context, gestures: List<RecordedGesture>): Boolean {
@@ -234,6 +221,7 @@ object GestureStore {
         val editor = prefs(context).edit()
             .putString(currentGestureKey(context), mainArray.toString())
 
+        // Default Config save karte waqt old key bhi migrate/remove ho jaye.
         if (getActiveConfigName(context) == DEFAULT_CONFIG) {
             editor.remove(KEY_GESTURES)
         }
@@ -241,7 +229,9 @@ object GestureStore {
         return editor.commit()
     }
 
-    private fun parseGesturesFromJson(json: String): List<RecordedGesture> {
+    fun load(context: Context): List<RecordedGesture> {
+        val json = loadJsonForActiveConfig(context) ?: return emptyList()
+
         return try {
             val mainArray = JSONArray(json)
             val result = mutableListOf<RecordedGesture>()
@@ -300,16 +290,6 @@ object GestureStore {
         }
     }
 
-    fun load(context: Context): List<RecordedGesture> {
-        val json = loadJsonForActiveConfig(context) ?: return emptyList()
-        return parseGesturesFromJson(json)
-    }
-
-    fun loadConfig(context: Context, configName: String): List<RecordedGesture> {
-        val json = loadJsonForConfig(context, configName) ?: return emptyList()
-        return parseGesturesFromJson(json)
-    }
-
     private fun cleanOpt(obj: JSONObject, key: String): String? {
         return obj.optString(key, "").takeIf { it.isNotBlank() }
     }
@@ -318,237 +298,95 @@ object GestureStore {
         return load(context).isNotEmpty()
     }
 
-    fun hasRecordingForConfig(context: Context, configName: String): Boolean {
-        return loadConfig(context, configName).isNotEmpty()
-    }
-
     fun totalDuration(context: Context): Long {
-        return totalDurationForConfig(context, getActiveConfigName(context))
-    }
-
-    fun totalDurationForConfig(context: Context, configName: String): Long {
-        val gestures = loadConfig(context, configName)
+        val gestures = load(context)
         return gestures.maxOfOrNull { gesture ->
             val gestureDuration = (gesture.points.lastOrNull()?.t ?: 0L).coerceAtMost(60000L)
             gesture.delayFromStart + gestureDuration
         } ?: 0L
     }
 
-    fun getNextConfig(context: Context, currentName: String): String? {
-        val safeCurrent = normalizeConfigName(currentName)
-        val raw = prefs(context).getString(nextKeyForName(safeCurrent), null)
-        if (raw.isNullOrBlank()) return null
-
-        val safeNext = normalizeConfigName(raw)
-
-        if (safeNext == safeCurrent) return null
-        if (!getAllConfigNames(context).map { normalizeConfigName(it) }.contains(safeNext)) return null
-        if (!hasRecordingForConfig(context, safeNext)) return null
-
-        return safeNext
-    }
-
-    fun wouldCreateCycle(context: Context, currentName: String, nextName: String): Boolean {
-        val current = normalizeConfigName(currentName)
-        var cursor = normalizeConfigName(nextName)
-
-        if (current == cursor) return true
-
-        val seen = linkedSetOf<String>()
-        var guard = 0
-
-        while (guard < 80 && seen.add(cursor)) {
-            if (cursor == current) return true
-            cursor = getNextConfig(context, cursor) ?: return false
-            guard++
-        }
-
-        return false
-    }
-
-    fun setNextConfig(context: Context, currentName: String, nextName: String?): Boolean {
-        val safeCurrent = normalizeConfigName(currentName)
-        val editor = prefs(context).edit()
-        val key = nextKeyForName(safeCurrent)
-
-        if (nextName.isNullOrBlank()) {
-            editor.remove(key)
-            editor.apply()
-            return true
-        }
-
-        val safeNext = normalizeConfigName(nextName)
-
-        if (safeNext == safeCurrent) {
-            editor.remove(key)
-            editor.apply()
-            return false
-        }
-
-        if (!getAllConfigNames(context).map { normalizeConfigName(it) }.contains(safeNext)) {
-            editor.remove(key)
-            editor.apply()
-            return false
-        }
-
-        if (!hasRecordingForConfig(context, safeNext)) {
-            editor.remove(key)
-            editor.apply()
-            return false
-        }
-
-        if (wouldCreateCycle(context, safeCurrent, safeNext)) {
-            return false
-        }
-
-        editor.putString(key, safeNext)
-        editor.apply()
-        return true
-    }
-
-    fun clearChainFrom(context: Context, startName: String): Int {
-        val p = prefs(context)
-        val editor = p.edit()
-        val seen = linkedSetOf<String>()
-        var cursor = normalizeConfigName(startName)
-        var removed = 0
-        var guard = 0
-
-        while (guard < 80 && seen.add(cursor)) {
-            val key = nextKeyForName(cursor)
-            val rawNext = p.getString(key, null) ?: break
-            editor.remove(key)
-            removed++
-            cursor = normalizeConfigName(rawNext)
-            guard++
-        }
-
-        editor.apply()
-        return removed
-    }
-
-    fun getWorkflowChain(context: Context, startName: String, maxSteps: Int = 50): List<String> {
-        val chain = mutableListOf<String>()
-        val seen = linkedSetOf<String>()
-        var cursor = normalizeConfigName(startName)
-        var guard = 0
-
-        while (guard < maxSteps && seen.add(cursor)) {
-            chain.add(cursor)
-            val next = getNextConfig(context, cursor) ?: break
-            cursor = next
-            guard++
-        }
-
-        return chain
-    }
-
-    fun getWorkflowSummary(context: Context, startName: String): String {
-        val chain = getWorkflowChain(context, startName)
-        return if (chain.isEmpty()) normalizeConfigName(startName) else chain.joinToString(" ➜ ")
-    }
 
     fun deleteConfig(context: Context, name: String): Boolean {
         val safeName = normalizeConfigName(name)
         if (safeName == DEFAULT_CONFIG) return false
 
-        val oldNames = getAllConfigNames(context).map { normalizeConfigName(it) }.distinct()
-        val updatedNames = oldNames
+        val updatedNames = getAllConfigNames(context)
+            .map { normalizeConfigName(it) }
             .filter { it != safeName }
             .distinct()
             .ifEmpty { listOf(DEFAULT_CONFIG) }
 
         val editor = prefs(context).edit()
             .remove(configKey(safeName))
-            .remove(loopModeKeyForName(safeName))
-            .remove(loopValueKeyForName(safeName))
-            .remove(nextKeyForName(safeName))
+            .remove(KEY_LOOP_MODE + "_" + safeName)
+            .remove(KEY_LOOP_VALUE + "_" + safeName)
             .putString(KEY_ACTIVE_CONFIG, DEFAULT_CONFIG)
             .putString(KEY_CONFIG_LIST, JSONArray(updatedNames).toString())
-
-        oldNames.forEach { configName ->
-            val key = nextKeyForName(configName)
-            val next = prefs(context).getString(key, null)
-            if (normalizeConfigName(next) == safeName) {
-                editor.remove(key)
-            }
-        }
 
         return editor.commit()
     }
 
     fun clear(context: Context) {
-        val active = getActiveConfigName(context)
-        val p = prefs(context)
-
-        val editor = p.edit()
+        val editor = prefs(context).edit()
             .remove(currentGestureKey(context))
-            .remove(nextKeyForName(active))
-            .putString(loopModeKeyForName(active), "ONCE")
-            .putInt(loopValueKeyForName(active), 1)
+            .putString(loopModeKey(context), "ONCE")
+            .putInt(loopValueKey(context), 1)
 
-        // Ghost Link Fix:
-        // Agar kisi aur config ka next link is active config par aa raha tha,
-        // to recording clear hone par woh stale incoming link bhi remove karo.
-        getAllConfigNames(context).forEach { configName ->
-            val key = nextKeyForName(configName)
-            val next = p.getString(key, null)
-            if (normalizeConfigName(next) == active) {
-                editor.remove(key)
-            }
-        }
-
-        if (active == DEFAULT_CONFIG) {
+        if (getActiveConfigName(context) == DEFAULT_CONFIG) {
             editor.remove(KEY_GESTURES)
         }
 
         editor.commit()
     }
 
-    fun saveLoopSettings(context: Context, mode: String, value: Int) {
-        saveLoopSettingsForConfig(context, getActiveConfigName(context), mode, value)
+    private fun loopModeKey(context: Context): String {
+        return KEY_LOOP_MODE + "_" + normalizeConfigName(getActiveConfigName(context))
     }
 
-    fun saveLoopSettingsForConfig(context: Context, configName: String, mode: String, value: Int) {
+    private fun loopValueKey(context: Context): String {
+        return KEY_LOOP_VALUE + "_" + normalizeConfigName(getActiveConfigName(context))
+    }
+
+    fun saveLoopSettings(context: Context, mode: String, value: Int) {
         val safeMode = when (mode) {
             "COUNT", "INFINITE", "TIME" -> mode
             else -> "ONCE"
         }
         val safeValue = when (safeMode) {
-            "COUNT" -> value.coerceIn(1, 9999)
-            "TIME" -> value.coerceIn(1, 1440)
+            "COUNT" -> value.coerceIn(1, 999)
+            "TIME" -> value.coerceIn(1, 240)
             "INFINITE" -> 0
             else -> 1
         }
 
         prefs(context).edit()
-            .putString(loopModeKeyForName(configName), safeMode)
-            .putInt(loopValueKeyForName(configName), safeValue)
+            .putString(loopModeKey(context), safeMode)
+            .putInt(loopValueKey(context), safeValue)
             .apply()
     }
 
     fun getLoopMode(context: Context): String {
-        return getLoopModeForConfig(context, getActiveConfigName(context))
-    }
+        val p = prefs(context)
+        val mode = p.getString(
+            loopModeKey(context),
+            "ONCE"
+        ) ?: "ONCE"
 
-    fun getLoopValue(context: Context): Int {
-        return getLoopValueForConfig(context, getActiveConfigName(context))
-    }
-
-    fun getLoopModeForConfig(context: Context, configName: String): String {
-        val mode = prefs(context).getString(loopModeKeyForName(configName), "ONCE") ?: "ONCE"
         return when (mode) {
             "COUNT", "INFINITE", "TIME" -> mode
             else -> "ONCE"
         }
     }
 
-    fun getLoopValueForConfig(context: Context, configName: String): Int {
-        return when (getLoopModeForConfig(context, configName)) {
-            "COUNT" -> prefs(context).getInt(loopValueKeyForName(configName), 10).coerceIn(1, 9999)
-            "TIME" -> prefs(context).getInt(loopValueKeyForName(configName), 5).coerceIn(1, 1440)
+    fun getLoopValue(context: Context): Int {
+        val p = prefs(context)
+        return when (getLoopMode(context)) {
+            "COUNT" -> p.getInt(loopValueKey(context), 10).coerceIn(1, 999)
+            "TIME" -> p.getInt(loopValueKey(context), 5).coerceIn(1, 240)
             "INFINITE" -> 0
             else -> 1
         }
     }
 }
+

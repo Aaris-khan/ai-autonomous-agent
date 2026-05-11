@@ -45,7 +45,6 @@ class FloatingControlService : Service() {
     private lateinit var btnStart: Button
     private var btnClear: android.widget.Button? = null
     private lateinit var btnLoop: Button
-    private lateinit var btnWorkflow: Button
     private lateinit var btnSave: Button
     private lateinit var btnUndo: Button
     private lateinit var btnCut: Button
@@ -150,7 +149,6 @@ class FloatingControlService : Service() {
                     btnStart.setOnClickListener { handleStartButton() }
                     updateLoopButtonText(btnLoop)
                     btnLoop.visibility = View.GONE
-                    if (::btnWorkflow.isInitialized) btnWorkflow.visibility = View.GONE
                     btnSave.visibility = View.GONE
                     btnClear?.visibility = View.GONE
                     if (::btnUndo.isInitialized) btnUndo.visibility = View.GONE
@@ -170,12 +168,6 @@ class FloatingControlService : Service() {
                 toggleLoopMode()
                 updateLoopButtonText(this)
             }
-            visibility = if (GestureStore.hasRecording(this@FloatingControlService)) View.VISIBLE else View.GONE
-        }
-
-        btnWorkflow = Button(this).apply {
-            updateWorkflowButtonUI()
-            setOnClickListener { showWorkflowHubDialog() }
             visibility = if (GestureStore.hasRecording(this@FloatingControlService)) View.VISIBLE else View.GONE
         }
 
@@ -205,7 +197,6 @@ class FloatingControlService : Service() {
         root.addView(label)
         root.addView(btnStart)
         root.addView(btnLoop)
-        root.addView(btnWorkflow)
         btnClear?.let { root.addView(it) }
         root.addView(btnSave)
         root.addView(btnUndo)
@@ -252,15 +243,15 @@ class FloatingControlService : Service() {
             else -> GestureStore.saveLoopSettings(this, "ONCE", 1)
         }
     }
+
     private fun updateLoopButtonText(btn: Button) {
-        val active = GestureStore.getActiveConfigName(this)
-        val mode = GestureStore.getLoopModeForConfig(this, active)
-        val value = GestureStore.getLoopValueForConfig(this, active)
+        val mode = GestureStore.getLoopMode(this)
+        val value = GestureStore.getLoopValue(this)
         btn.text = when (mode) {
-            "COUNT" -> "🔁 ${value}x"
-            "INFINITE" -> "🔁 ∞"
-            "TIME" -> "⏱️ ${value}m"
-            else -> "🔁 1x"
+            "COUNT" -> "${value}x"
+            "INFINITE" -> "∞"
+            "TIME" -> "${value}m"
+            else -> "1x"
         }
     }
 
@@ -298,7 +289,6 @@ class FloatingControlService : Service() {
         btnCut.visibility = View.GONE
         label.visibility = View.GONE
         btnLoop.visibility = View.GONE
-        if (::btnWorkflow.isInitialized) btnWorkflow.visibility = View.GONE
         val params = panelParams
         val panel = panelView
                 if (params != null && panel != null) {
@@ -327,7 +317,6 @@ class FloatingControlService : Service() {
         btnCut.visibility = View.VISIBLE
         label.visibility = View.VISIBLE
         btnLoop.visibility = if (GestureStore.hasRecording(this)) View.VISIBLE else View.GONE
-        if (::btnWorkflow.isInitialized) { updateWorkflowButtonUI(); btnWorkflow.visibility = if (GestureStore.hasRecording(this)) View.VISIBLE else View.GONE }
         btnClear?.visibility = if (GestureStore.hasRecording(this) && unsavedGestures.isEmpty()) View.VISIBLE else View.GONE
 
         val params = panelParams
@@ -413,230 +402,7 @@ class FloatingControlService : Service() {
             Toast.makeText(this, "Config popup open nahi hua: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
-    private fun updateWorkflowButtonUI() {
-        if (!::btnWorkflow.isInitialized) return
 
-        val active = GestureStore.getActiveConfigName(this)
-        val chain = GestureStore.getWorkflowChain(this, active)
-        btnWorkflow.text = if (chain.size > 1) "🧱 ${chain.size}" else "🧱 WF"
-    }
-
-    private fun showWorkflowHubDialog() {
-        if (isRecording || AutoActionService.isPlaying() || unsavedGestures.isNotEmpty()) {
-            Toast.makeText(this, "Recording/Play/Unsaved edit ke time workflow change nahi kar sakte", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val active = GestureStore.getActiveConfigName(this)
-        val chainText = GestureStore.getWorkflowSummary(this, active)
-        val mode = GestureStore.getLoopModeForConfig(this, active)
-        val value = GestureStore.getLoopValueForConfig(this, active)
-        val loopText = when (mode) {
-            "COUNT" -> "Loop: $value cycles"
-            "INFINITE" -> "Loop: Infinity"
-            "TIME" -> "Loop: $value minutes"
-            else -> "Loop: Once"
-        }
-
-        val items = arrayOf(
-            "➕ Add / Change Next Step",
-            "🚫 Remove Next Link",
-            "🧹 Clear Full Chain From Here",
-            "🔁 Loop Settings",
-            "👀 Preview Chain",
-            "▶️ Play Workflow"
-        )
-
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("Workflow Builder")
-            .setMessage("Start: $active\n$loopText\n$chainText")
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> showChooseNextConfigDialog(active)
-                    1 -> {
-                        GestureStore.setNextConfig(this, active, null)
-                        updateWorkflowButtonUI()
-                        Toast.makeText(this, "Next link delete ho gayi", Toast.LENGTH_SHORT).show()
-                    }
-                    2 -> showClearFullChainDialog()
-                    3 -> showLoopSettingsDialog()
-                    4 -> showWorkflowPreviewDialog()
-                    5 -> {
-                        if (!GestureStore.hasRecording(this)) {
-                            Toast.makeText(this, "Active config me recording nahi hai", Toast.LENGTH_SHORT).show()
-                        } else {
-                            handleStartButton()
-                        }
-                    }
-                }
-            }
-            .create()
-
-        showOverlayDialogSafely(dialog)
-    }
-
-    private fun showChooseNextConfigDialog(currentConfig: String) {
-        val candidates = GestureStore.getAllConfigNames(this)
-            .filter { it != currentConfig && GestureStore.hasRecordingForConfig(this, it) }
-            .distinct()
-
-        if (candidates.isEmpty()) {
-            Toast.makeText(this, "Link ke liye koi saved config nahi mili", Toast.LENGTH_LONG).show()
-            return
-        }
-
-        val options = mutableListOf("🚫 Stop Here / Remove Link")
-        options.addAll(candidates)
-
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("After '$currentConfig' run:")
-            .setItems(options.toTypedArray()) { _, which ->
-                if (which == 0) {
-                    GestureStore.setNextConfig(this, currentConfig, null)
-                    Toast.makeText(this, "Sequence yahin rukegi", Toast.LENGTH_SHORT).show()
-                } else {
-                    val next = options[which]
-                    if (GestureStore.wouldCreateCycle(this, currentConfig, next)) {
-                        Toast.makeText(this, "Cycle ban rahi thi, isliye link block kar di", Toast.LENGTH_LONG).show()
-                    } else {
-                        val ok = GestureStore.setNextConfig(this, currentConfig, next)
-                        Toast.makeText(
-                            this,
-                            if (ok) "Linked: $currentConfig ➜ $next" else "Link save nahi hui",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                }
-                updateWorkflowButtonUI()
-            }
-            .create()
-
-        showOverlayDialogSafely(dialog)
-    }
-
-    private fun showLoopSettingsDialog() {
-        val active = GestureStore.getActiveConfigName(this)
-        val items = arrayOf(
-            "▶️ Once",
-            "🔢 Number of Cycles",
-            "⏱️ Minutes",
-            "♾️ Infinity Loop"
-        )
-
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("Loop Settings for '$active'")
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> {
-                        GestureStore.saveLoopSettingsForConfig(this, active, "ONCE", 1)
-                        updateLoopButtonText(btnLoop)
-                        Toast.makeText(this, "Loop: Once", Toast.LENGTH_SHORT).show()
-                    }
-                    1 -> showNumberInputDialog(
-                        title = "Kitne cycles chalana hai?",
-                        hint = "Example: 5",
-                        defaultValue = GestureStore.getLoopValueForConfig(this, active).takeIf { it > 1 } ?: 10,
-                        min = 1,
-                        max = 9999
-                    ) { value ->
-                        GestureStore.saveLoopSettingsForConfig(this, active, "COUNT", value)
-                        updateLoopButtonText(btnLoop)
-                        Toast.makeText(this, "Loop: $value cycles", Toast.LENGTH_SHORT).show()
-                    }
-                    2 -> showNumberInputDialog(
-                        title = "Kitne minutes chalana hai?",
-                        hint = "Example: 15",
-                        defaultValue = GestureStore.getLoopValueForConfig(this, active).takeIf { it > 1 } ?: 5,
-                        min = 1,
-                        max = 1440
-                    ) { value ->
-                        GestureStore.saveLoopSettingsForConfig(this, active, "TIME", value)
-                        updateLoopButtonText(btnLoop)
-                        Toast.makeText(this, "Loop: $value minutes", Toast.LENGTH_SHORT).show()
-                    }
-                    3 -> {
-                        GestureStore.saveLoopSettingsForConfig(this, active, "INFINITE", 0)
-                        updateLoopButtonText(btnLoop)
-                        Toast.makeText(this, "Loop: Infinity", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
-            .create()
-
-        showOverlayDialogSafely(dialog)
-    }
-
-    private fun showNumberInputDialog(
-        title: String,
-        hint: String,
-        defaultValue: Int,
-        min: Int,
-        max: Int,
-        onOk: (Int) -> Unit
-    ) {
-        val input = android.widget.EditText(this).apply {
-            setSingleLine(true)
-            this.hint = hint
-            setText(defaultValue.toString())
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
-            selectAll()
-        }
-
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle(title)
-            .setView(input)
-            .setPositiveButton("Save") { _, _ ->
-                val value = input.text?.toString()?.trim()?.toIntOrNull()
-                if (value == null || value !in min..max) {
-                    Toast.makeText(this, "Valid number $min se $max ke beech do", Toast.LENGTH_LONG).show()
-                } else {
-                    onOk(value)
-                }
-            }
-            .setNegativeButton("Cancel", null)
-            .create()
-
-        showOverlayDialogSafely(dialog)
-    }
-
-    private fun showWorkflowPreviewDialog() {
-        val active = GestureStore.getActiveConfigName(this)
-        val chain = GestureStore.getWorkflowSummary(this, active)
-        val mode = GestureStore.getLoopModeForConfig(this, active)
-        val value = GestureStore.getLoopValueForConfig(this, active)
-
-        val loopText = when (mode) {
-            "COUNT" -> "$value cycles"
-            "INFINITE" -> "Infinity"
-            "TIME" -> "$value minutes"
-            else -> "Once"
-        }
-
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("Workflow Preview")
-            .setMessage("Chain:\n$chain\n\nLoop:\n$loopText\n\nPLAY dabane par yahi poora workflow chalega.")
-            .setPositiveButton("OK", null)
-            .create()
-
-        showOverlayDialogSafely(dialog)
-    }
-
-    private fun showClearFullChainDialog() {
-        val active = GestureStore.getActiveConfigName(this)
-
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("Clear Full Chain?")
-            .setMessage("Isse '$active' se aage jitni linked sequence hai, uske links delete ho jayenge. Recordings delete nahi hongi.")
-            .setPositiveButton("Clear Links") { _, _ ->
-                val count = GestureStore.clearChainFrom(this, active)
-                updateWorkflowButtonUI()
-                Toast.makeText(this, "$count workflow links delete ho gaye", Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("Cancel", null)
-            .create()
-
-        showOverlayDialogSafely(dialog)
-    }
     private fun showConfigManagerDialog() {
         if (isRecording || AutoActionService.isPlaying() || unsavedGestures.isNotEmpty()) {
             Toast.makeText(this, "Recording/Play/Unsaved edit ke time config change nahi kar sakte", Toast.LENGTH_SHORT).show()
@@ -644,39 +410,29 @@ class FloatingControlService : Service() {
         }
 
         val savedConfigs = GestureStore.getAllConfigNames(this).toMutableList()
-        val active = GestureStore.getActiveConfigName(this)
-        val items = (savedConfigs + listOf(
-            "🧱 Workflow Builder",
-            "🔁 Loop Settings",
-            "➕ Create New Config"
-        )).toTypedArray()
+        val items = (savedConfigs + "➕ Create New Config").toTypedArray()
 
         val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("Macro Configs • $active")
+            .setTitle("Macro Configs")
             .setItems(items) { _, which ->
-                when {
-                    which < savedConfigs.size -> {
-                        val selected = savedConfigs[which]
-                        GestureStore.setActiveConfigName(this, selected)
-                        refreshConfigLabel()
-                        if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
-                        if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
+                if (which == savedConfigs.size) {
+                    showCreateConfigDialog()
+                } else {
+                    val selected = savedConfigs[which]
+                    GestureStore.setActiveConfigName(this, selected)
+                    refreshConfigLabel()
+                    if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
 
-                        unsavedGestures = emptyList()
-                        glassHiddenAt = 0L
-                        nextNavigationGapOverride = null
-                        pendingDiscardConfirm = false
+                    unsavedGestures = emptyList()
+                    glassHiddenAt = 0L
+                    nextNavigationGapOverride = null
+                    pendingDiscardConfirm = false
 
-                        val hasOld = GestureStore.hasRecording(this)
-                        updateUIState(if (hasOld) "PLAY" else "START", false, hasOld, true)
-                        restorePanelUI()
+                    val hasOld = GestureStore.hasRecording(this)
+                    updateUIState(if (hasOld) "PLAY" else "START", false, hasOld, true)
+                    restorePanelUI()
 
-                        Toast.makeText(this, "Switched: $selected", Toast.LENGTH_SHORT).show()
-                    }
-
-                    which == savedConfigs.size -> showWorkflowHubDialog()
-                    which == savedConfigs.size + 1 -> showLoopSettingsDialog()
-                    which == savedConfigs.size + 2 -> showCreateConfigDialog()
+                    Toast.makeText(this, "Switched: $selected", Toast.LENGTH_SHORT).show()
                 }
             }
             .setNeutralButton("Delete Active Config") { _, _ ->
@@ -688,7 +444,6 @@ class FloatingControlService : Service() {
                 pendingDiscardConfirm = false
                 refreshConfigLabel()
                 if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
-                if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
                 val hasOld = GestureStore.hasRecording(this)
                 updateUIState(if (hasOld) "PLAY" else "START", false, hasOld, true)
                 restorePanelUI()
@@ -733,7 +488,6 @@ class FloatingControlService : Service() {
                 GestureStore.setActiveConfigName(this, name)
                 refreshConfigLabel()
                 if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
-                if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
 
                 unsavedGestures = emptyList()
                 glassHiddenAt = 0L
@@ -925,27 +679,21 @@ class FloatingControlService : Service() {
         if (unsavedGestures.isNotEmpty()) return true
         return GestureStore.hasRecording(this)
     }
-    private fun updateUIState(startText: String, showSave: Boolean, showOthers: Boolean, showCut: Boolean = true) {
+
+        private fun updateUIState(startText: String, showSave: Boolean, showOthers: Boolean, showCut: Boolean = true) {
         if (::btnStart.isInitialized) btnStart.text = startText
         if (::btnSave.isInitialized) btnSave.visibility = if (showSave) View.VISIBLE else View.GONE
         if (::btnUndo.isInitialized) {
             btnUndo.visibility = if (hasAnythingToUndo()) View.VISIBLE else View.GONE
         }
-        val hasSavedRecording = GestureStore.hasRecording(this)
-        if (::btnLoop.isInitialized) {
-            btnLoop.visibility = if (showOthers && hasSavedRecording) View.VISIBLE else View.GONE
-            updateLoopButtonText(btnLoop)
-        }
-        if (::btnWorkflow.isInitialized) {
-            updateWorkflowButtonUI()
-            btnWorkflow.visibility = if (showOthers && hasSavedRecording) View.VISIBLE else View.GONE
-        }
+        if (::btnLoop.isInitialized) btnLoop.visibility = if (showOthers && GestureStore.hasRecording(this)) View.VISIBLE else View.GONE
         if (::btnCut.isInitialized) btnCut.visibility = if (showCut) View.VISIBLE else View.GONE
-        btnClear?.visibility = if (showOthers && hasSavedRecording && unsavedGestures.isEmpty()) View.VISIBLE else View.GONE
+        btnClear?.visibility = if (showOthers && GestureStore.hasRecording(this) && unsavedGestures.isEmpty()) View.VISIBLE else View.GONE
+        // btnSettings/btnSpeed removed from UI for now.
     }
 
     // ✅ EXACT NAVIGATION GAP FIX
-    private fun extractAndAppendGestures() {
+        private fun extractAndAppendGestures() {
         val view = captureView ?: return
         val newGestures = view.getRecordedGestures()
             .filter { it.points.isNotEmpty() }
@@ -957,21 +705,22 @@ class FloatingControlService : Service() {
             g.delayFromStart.coerceAtLeast(0L) + (g.points.lastOrNull()?.t ?: 0L).coerceAtLeast(0L)
         } ?: 0L
 
-        val navigationGap = if (unsavedGestures.isNotEmpty() && glassHiddenAt > 0L) {
-            (view.getRecordingStartTime() - glassHiddenAt)
-                .coerceAtLeast(0L)
-                .coerceAtMost(120000L)
+        val overrideGap = nextNavigationGapOverride
+        val navigationGap = if (unsavedGestures.isNotEmpty()) {
+            (overrideGap ?: if (glassHiddenAt > 0L) {
+                view.getRecordingStartTime() - glassHiddenAt
+            } else {
+                0L
+            }).coerceAtLeast(0L).coerceAtMost(120000L)
         } else {
             0L
         }
+        nextNavigationGapOverride = null
 
         val timeOffset = if (unsavedGestures.isEmpty()) 0L else lastGestureEnd + navigationGap
-
         unsavedGestures = (unsavedGestures + newGestures.map { g ->
             g.copy(delayFromStart = (g.delayFromStart + timeOffset).coerceAtLeast(0L))
         }).sortedBy { it.delayFromStart }
-
-        nextNavigationGapOverride = null
     }
 
         private fun handleStartButton() {
@@ -1110,10 +859,8 @@ class FloatingControlService : Service() {
                 glassHiddenAt = 0L
                 nextNavigationGapOverride = null
             } else {
-                // Undo Time-Freeze Fix:
-                // Purana gap preserve rahega + naya wait time bhi live add hota rahega.
-                glassHiddenAt = android.os.SystemClock.uptimeMillis() - preservedGap
-                nextNavigationGapOverride = null
+                glassHiddenAt = android.os.SystemClock.uptimeMillis()
+                nextNavigationGapOverride = preservedGap
             }
 
             val hasOld = GestureStore.hasRecording(this)
