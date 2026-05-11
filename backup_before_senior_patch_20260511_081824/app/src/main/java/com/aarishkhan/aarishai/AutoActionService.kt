@@ -306,22 +306,9 @@ class AutoActionService : AccessibilityService() {
     }
 
     private fun decrementActiveGestureSafely() {
-        while (true) {
-            val current = activeGestureCount.get()
-            if (current <= 0) return
-            if (activeGestureCount.compareAndSet(current, current - 1)) return
+        if (activeGestureCount.get() > 0) {
+            activeGestureCount.decrementAndGet()
         }
-    }
-
-    private fun scheduleGestureWatchdog(runId: Int, timeoutMs: Long): Runnable {
-        val safeTimeout = timeoutMs.coerceIn(900L, 65000L)
-        val task = Runnable {
-            if (isCurrentCallbackRun(runId)) {
-                decrementActiveGestureSafely()
-            }
-        }
-        handler.postDelayed(task, safeTimeout)
-        return task
     }
 
     // ==========================================================
@@ -1095,13 +1082,13 @@ class AutoActionService : AccessibilityService() {
 
         val firstPoint = points.first()
 
-        val screenW = (resources.displayMetrics.widthPixels.toFloat() - 2f).coerceAtLeast(2f)
-        val screenH = (resources.displayMetrics.heightPixels.toFloat() - 2f).coerceAtLeast(2f)
+        val screenW = (resources.displayMetrics.widthPixels.toFloat() - 1f).coerceAtLeast(1f)
+        val screenH = (resources.displayMetrics.heightPixels.toFloat() - 1f).coerceAtLeast(1f)
 
         val path = Path()
         path.moveTo(
-            startX.coerceIn(2f, screenW),
-            startY.coerceIn(2f, screenH)
+            startX.coerceIn(1f, screenW),
+            startY.coerceIn(1f, screenH)
         )
 
         var movement = false
@@ -1118,15 +1105,15 @@ class AutoActionService : AccessibilityService() {
                 val shiftedY = startY + (p.y - firstPoint.y)
 
                 path.lineTo(
-                    shiftedX.coerceIn(2f, screenW),
-                    shiftedY.coerceIn(2f, screenH)
+                    shiftedX.coerceIn(1f, screenW),
+                    shiftedY.coerceIn(1f, screenH)
                 )
             }
         }
 
         if (!movement) {
-            val safeX = (startX + 1.5f).coerceIn(2f, screenW)
-            val safeY = (startY + 1.5f).coerceIn(2f, screenH)
+            val safeX = (startX + 2f).coerceIn(2f, screenW)
+            val safeY = (startY + 2f).coerceIn(2f, screenH)
             path.lineTo(safeX, safeY)
         }
 
@@ -1137,27 +1124,24 @@ class AutoActionService : AccessibilityService() {
                 .addStroke(
                     GestureDescription.StrokeDescription(
                         path,
-                        0L,
+                        0,
                         duration
                     )
                 )
                 .build()
 
             activeGestureCount.incrementAndGet()
-            val watchdog = scheduleGestureWatchdog(runId, duration + 2500L)
 
             val accepted = dispatchGesture(
                 gesture,
                 object : AccessibilityService.GestureResultCallback() {
                     override fun onCompleted(gestureDescription: GestureDescription?) {
                         super.onCompleted(gestureDescription)
-                        handler.removeCallbacks(watchdog)
                         if (isCurrentCallbackRun(runId)) decrementActiveGestureSafely()
                     }
 
                     override fun onCancelled(gestureDescription: GestureDescription?) {
                         super.onCancelled(gestureDescription)
-                        handler.removeCallbacks(watchdog)
                         if (isCurrentCallbackRun(runId)) decrementActiveGestureSafely()
                     }
                 },
@@ -1165,7 +1149,6 @@ class AutoActionService : AccessibilityService() {
             )
 
             if (!accepted && isCurrentCallbackRun(runId)) {
-                handler.removeCallbacks(watchdog)
                 decrementActiveGestureSafely()
             }
 
@@ -1179,7 +1162,6 @@ class AutoActionService : AccessibilityService() {
             ).show()
         }
     }
-
     private fun getRealAppRootForPoint(tapX: Int?, tapY: Int?): AccessibilityNodeInfo? {
         val myPackage = packageName
         var bestRoot: AccessibilityNodeInfo? = null
@@ -1429,16 +1411,9 @@ class AutoActionService : AccessibilityService() {
         val safeY = startY.coerceIn(2f, screenH)
         val holdDuration = duration.coerceAtLeast(650L).coerceAtMost(3500L)
         val callbackDelivered = java.util.concurrent.atomic.AtomicBoolean(false)
-        val timeoutTask = Runnable {
-            if (callbackDelivered.compareAndSet(false, true)) {
-                onDone(false)
-            }
-        }
-        handler.postDelayed(timeoutTask, holdDuration + if (isDoubleTap) 3200L else 2400L)
 
         fun finishOnce(value: Boolean) {
             if (callbackDelivered.compareAndSet(false, true)) {
-                handler.removeCallbacks(timeoutTask)
                 onDone(value)
             }
         }

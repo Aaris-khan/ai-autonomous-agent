@@ -497,9 +497,11 @@ private fun showSelectStartConfigForWorkflowDialog() {
         .setItems(configs.toTypedArray()) { _, which ->
             val startConfig = configs[which]
 
+            // Fresh workflow build: sirf START config ka purana NEXT link clear.
+            // Recording/config data delete nahi hota.
             GestureStore.setNextConfig(this, startConfig, null)
-            GestureStore.setActiveConfigName(this, startConfig)
 
+            GestureStore.setActiveConfigName(this, startConfig)
             refreshConfigLabel()
             if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
             if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
@@ -515,8 +517,6 @@ private fun showSelectStartConfigForWorkflowDialog() {
 
     showOverlayDialogSafely(dialog)
 }
-
-
 
 
 
@@ -545,15 +545,11 @@ private fun showSelectStartConfigForWorkflowDialog() {
         android.R.layout.simple_list_item_1,
         options
     ) {
-        override fun getView(
-            position: Int,
-            convertView: android.view.View?,
-            parent: android.view.ViewGroup
-        ): android.view.View {
+        override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup): View {
             val row = super.getView(position, convertView, parent)
             row.findViewById<android.widget.TextView>(android.R.id.text1)?.apply {
                 if (position == 0) {
-                    setTextColor(android.graphics.Color.rgb(220, 38, 38))
+                    setTextColor(Color.rgb(220, 38, 38))
                     setTypeface(typeface, android.graphics.Typeface.BOLD)
                 }
             }
@@ -565,9 +561,12 @@ private fun showSelectStartConfigForWorkflowDialog() {
         .setTitle("Step $stepNumber: '$currentConfig' ke baad kya chale?")
         .setAdapter(adapter) { _, which ->
             if (which == 0) {
+                // CRITICAL FIX:
+                // Last selected config ka stale NEXT link clear karo,
+                // warna purani ghost chain aage continue ho sakti hai.
                 GestureStore.setNextConfig(this, currentConfig, null)
-                GestureStore.setActiveConfigName(this, originalStartConfig)
 
+                GestureStore.setActiveConfigName(this, originalStartConfig)
                 refreshConfigLabel()
                 if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
                 if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
@@ -580,6 +579,9 @@ private fun showSelectStartConfigForWorkflowDialog() {
 
             val nextConfig = options[which]
 
+            // Rebuild mode:
+            // Selected NEXT config ka purana outgoing link pehle clear karo,
+            // taaki old/stale links wizard aur playback ko confuse na karein.
             GestureStore.setNextConfig(this, nextConfig, null)
 
             if (GestureStore.wouldCreateCycle(this, currentConfig, nextConfig)) {
@@ -591,7 +593,6 @@ private fun showSelectStartConfigForWorkflowDialog() {
             val ok = GestureStore.setNextConfig(this, currentConfig, nextConfig)
             if (ok) {
                 GestureStore.setActiveConfigName(this, originalStartConfig)
-
                 refreshConfigLabel()
                 if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
                 if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
@@ -599,6 +600,8 @@ private fun showSelectStartConfigForWorkflowDialog() {
 
                 Toast.makeText(this, "Linked: $currentConfig ➜ $nextConfig", Toast.LENGTH_SHORT).show()
 
+                // UNLIMITED CHAINING:
+                // Ab next config ke baad kya chale, ye phir se pucho.
                 showSelectNextConfigForWorkflowDialog(
                     currentConfig = nextConfig,
                     stepNumber = stepNumber + 1,
@@ -614,8 +617,6 @@ private fun showSelectStartConfigForWorkflowDialog() {
 
     showOverlayDialogSafely(dialog)
 }
-
-
 
 
 

@@ -366,7 +366,7 @@ object GestureStore {
         val seen = linkedSetOf<String>()
         var guard = 0
 
-        while (guard < 200 && seen.add(cursor)) {
+        while (guard < 80 && seen.add(cursor)) {
             if (cursor == current) return true
             cursor = getNextConfig(context, cursor) ?: return false
             guard++
@@ -423,7 +423,7 @@ object GestureStore {
         var removed = 0
         var guard = 0
 
-        while (guard < 200 && seen.add(cursor)) {
+        while (guard < 80 && seen.add(cursor)) {
             val key = nextKeyForName(cursor)
             val rawNext = p.getString(key, null) ?: break
             editor.remove(key)
@@ -436,7 +436,7 @@ object GestureStore {
         return removed
     }
 
-    fun getWorkflowChain(context: Context, startName: String, maxSteps: Int = 200): List<String> {
+    fun getWorkflowChain(context: Context, startName: String, maxSteps: Int = 50): List<String> {
         val chain = mutableListOf<String>()
         val seen = linkedSetOf<String>()
         var cursor = normalizeConfigName(startName)

@@ -16,7 +16,7 @@ import android.widget.Toast
 class MainActivity : Activity() {
     private lateinit var btnScreenCommand: Button
     private var isWaitingForPermission = false
-    private var lastPermissionLaunchAt = 0L
+    private var lastPermissionLaunchAt = savedInstanceState?.getLong(KEY_LAST_PERMISSION_LAUNCH_AT, 0L) ?: 0L
     private var notificationPermissionAskedThisSession = false
     private var lastPermissionScreen: String? = null
     private var autoPermissionPromptDone = false
@@ -100,7 +100,12 @@ class MainActivity : Activity() {
                 isWaitingForPermission = true
                 lastPermissionScreen = "accessibility"
                 try {
+                    try {
                     startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                } catch (e: Exception) {
+                    isWaitingForPermission = false
+                    Toast.makeText(this, "Accessibility settings open nahi hui: ${e.message}", Toast.LENGTH_LONG).show()
+                }
                 } catch (e: Exception) {
                     isWaitingForPermission = false
                     Toast.makeText(this, "Accessibility settings open nahi hui: ${e.message}", Toast.LENGTH_LONG).show()

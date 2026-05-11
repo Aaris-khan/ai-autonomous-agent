@@ -16,7 +16,7 @@ import android.widget.Toast
 class MainActivity : Activity() {
     private lateinit var btnScreenCommand: Button
     private var isWaitingForPermission = false
-    private var lastPermissionLaunchAt = 0L
+    private var lastPermissionLaunchAt = savedInstanceState?.getLong(KEY_LAST_PERMISSION_LAUNCH_AT, 0L) ?: 0L
     private var notificationPermissionAskedThisSession = false
     private var lastPermissionScreen: String? = null
     private var autoPermissionPromptDone = false
@@ -25,7 +25,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
 
         isWaitingForPermission = savedInstanceState?.getBoolean(KEY_WAITING_PERMISSION, false) ?: false
-        lastPermissionLaunchAt = savedInstanceState?.getLong(KEY_LAST_PERMISSION_LAUNCH_AT, 0L) ?: 0L
+        lastPermissionLaunchAt = 0L
         notificationPermissionAskedThisSession = savedInstanceState?.getBoolean(KEY_NOTIFICATION_ASKED, false) ?: false
         lastPermissionScreen = savedInstanceState?.getString(KEY_LAST_PERMISSION_SCREEN)
         autoPermissionPromptDone = savedInstanceState?.getBoolean(KEY_AUTO_PERMISSION_PROMPT_DONE, false) ?: false

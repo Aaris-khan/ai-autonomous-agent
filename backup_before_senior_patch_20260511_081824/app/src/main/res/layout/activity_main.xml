@@ -2,7 +2,7 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#F7F8FC"
+    android:background="#EEF2F8"
     android:padding="28dp">
 
     <Button
@@ -11,10 +11,6 @@
         android:layout_height="70dp"
         android:layout_gravity="center"
         android:text="SCREEN COMMAND"
-        android:textColor="#FFFFFF"
-        android:backgroundTint="#111827"
-        android:elevation="6dp"
-        android:minHeight="70dp"
         android:textSize="22sp"
         android:textStyle="bold" />
 </FrameLayout>

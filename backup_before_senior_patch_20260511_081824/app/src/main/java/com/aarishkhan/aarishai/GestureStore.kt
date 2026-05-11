@@ -157,15 +157,6 @@ object GestureStore {
         setActiveConfigName(context, getActiveConfigName(context))
     }
 
-    private fun cleanCoordinate(value: Float): Float {
-        return if (value.isNaN() || value.isInfinite()) 0f else value
-    }
-
-    private fun cleanPercent(value: Float, fallback: Float = 0f): Float {
-        val safe = if (value.isNaN() || value.isInfinite()) fallback else value
-        return safe.coerceIn(0f, 1f)
-    }
-
     private fun loadJsonForConfig(context: Context, configName: String): String? {
         val p = prefs(context)
         val safeName = normalizeConfigName(configName)
@@ -211,12 +202,12 @@ object GestureStore {
             gestureObject.put("targetTop", gesture.targetTop)
             gestureObject.put("targetRight", gesture.targetRight)
             gestureObject.put("targetBottom", gesture.targetBottom)
-            gestureObject.put("xPercent", cleanPercent(gesture.xPercent).toDouble())
-            gestureObject.put("yPercent", cleanPercent(gesture.yPercent).toDouble())
-            gestureObject.put("targetWPercent", cleanPercent(gesture.targetWPercent).toDouble())
-            gestureObject.put("targetHPercent", cleanPercent(gesture.targetHPercent).toDouble())
-            gestureObject.put("insideXPercent", cleanPercent(gesture.insideXPercent, 0.5f).toDouble())
-            gestureObject.put("insideYPercent", cleanPercent(gesture.insideYPercent, 0.5f).toDouble())
+            gestureObject.put("xPercent", gesture.xPercent.coerceIn(0f, 1f).toDouble())
+            gestureObject.put("yPercent", gesture.yPercent.coerceIn(0f, 1f).toDouble())
+            gestureObject.put("targetWPercent", gesture.targetWPercent.coerceIn(0f, 1f).toDouble())
+            gestureObject.put("targetHPercent", gesture.targetHPercent.coerceIn(0f, 1f).toDouble())
+            gestureObject.put("insideXPercent", gesture.insideXPercent.coerceIn(0f, 1f).toDouble())
+            gestureObject.put("insideYPercent", gesture.insideYPercent.coerceIn(0f, 1f).toDouble())
             gestureObject.put("recordedScreenW", gesture.recordedScreenW.coerceAtLeast(0))
             gestureObject.put("recordedScreenH", gesture.recordedScreenH.coerceAtLeast(0))
 
@@ -226,8 +217,8 @@ object GestureStore {
                 .take(700)
                 .forEach { point ->
                     val pointObject = JSONObject()
-                    pointObject.put("x", cleanCoordinate(point.x).toDouble())
-                    pointObject.put("y", cleanCoordinate(point.y).toDouble())
+                    pointObject.put("x", point.x.toDouble())
+                    pointObject.put("y", point.y.toDouble())
                     pointObject.put("t", point.t.coerceAtLeast(0L).coerceAtMost(60000L))
                     pointsArray.put(pointObject)
                 }
@@ -264,8 +255,8 @@ object GestureStore {
                     val pointObject = pointsArray.optJSONObject(j) ?: continue
                     points.add(
                         GesturePoint(
-                            x = cleanCoordinate(pointObject.optDouble("x", 0.0).toFloat()),
-                            y = cleanCoordinate(pointObject.optDouble("y", 0.0).toFloat()),
+                            x = pointObject.optDouble("x", 0.0).toFloat(),
+                            y = pointObject.optDouble("y", 0.0).toFloat(),
                             t = pointObject.optLong("t", 0L).coerceAtLeast(0L).coerceAtMost(60000L)
                         )
                     )
@@ -290,12 +281,12 @@ object GestureStore {
                         targetTop = gestureObject.optInt("targetTop", -1),
                         targetRight = gestureObject.optInt("targetRight", -1),
                         targetBottom = gestureObject.optInt("targetBottom", -1),
-                        xPercent = cleanPercent(gestureObject.optDouble("xPercent", 0.0).toFloat()),
-                        yPercent = cleanPercent(gestureObject.optDouble("yPercent", 0.0).toFloat()),
-                        targetWPercent = cleanPercent(gestureObject.optDouble("targetWPercent", 0.0).toFloat()),
-                        targetHPercent = cleanPercent(gestureObject.optDouble("targetHPercent", 0.0).toFloat()),
-                        insideXPercent = cleanPercent(gestureObject.optDouble("insideXPercent", 0.5).toFloat(), 0.5f),
-                        insideYPercent = cleanPercent(gestureObject.optDouble("insideYPercent", 0.5).toFloat(), 0.5f),
+                        xPercent = gestureObject.optDouble("xPercent", 0.0).toFloat().coerceIn(0f, 1f),
+                        yPercent = gestureObject.optDouble("yPercent", 0.0).toFloat().coerceIn(0f, 1f),
+                        targetWPercent = gestureObject.optDouble("targetWPercent", 0.0).toFloat().coerceIn(0f, 1f),
+                        targetHPercent = gestureObject.optDouble("targetHPercent", 0.0).toFloat().coerceIn(0f, 1f),
+                        insideXPercent = gestureObject.optDouble("insideXPercent", 0.5).toFloat().coerceIn(0f, 1f),
+                        insideYPercent = gestureObject.optDouble("insideYPercent", 0.5).toFloat().coerceIn(0f, 1f),
                         recordedScreenW = gestureObject.optInt("recordedScreenW", 0).coerceAtLeast(0),
                         recordedScreenH = gestureObject.optInt("recordedScreenH", 0).coerceAtLeast(0)
                     )
@@ -366,7 +357,7 @@ object GestureStore {
         val seen = linkedSetOf<String>()
         var guard = 0
 
-        while (guard < 200 && seen.add(cursor)) {
+        while (guard < 80 && seen.add(cursor)) {
             if (cursor == current) return true
             cursor = getNextConfig(context, cursor) ?: return false
             guard++
@@ -423,7 +414,7 @@ object GestureStore {
         var removed = 0
         var guard = 0
 
-        while (guard < 200 && seen.add(cursor)) {
+        while (guard < 80 && seen.add(cursor)) {
             val key = nextKeyForName(cursor)
             val rawNext = p.getString(key, null) ?: break
             editor.remove(key)
@@ -436,7 +427,7 @@ object GestureStore {
         return removed
     }
 
-    fun getWorkflowChain(context: Context, startName: String, maxSteps: Int = 200): List<String> {
+    fun getWorkflowChain(context: Context, startName: String, maxSteps: Int = 50): List<String> {
         val chain = mutableListOf<String>()
         val seen = linkedSetOf<String>()
         var cursor = normalizeConfigName(startName)

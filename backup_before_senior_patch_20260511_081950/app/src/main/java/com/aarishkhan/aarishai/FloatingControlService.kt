@@ -456,7 +456,7 @@ private fun showWorkflowHubDialog() {
         val active = GestureStore.getActiveConfigName(this)
 
         val items = arrayOf(
-            "🧩 Build Unlimited Workflow: START ➜ NEXT ➜ STOP",
+            "🧩 Build Workflow: START ➜ NEXT ➜ LOOP",
             "➕ Change NEXT for Active Config",
             "🔁 Loop Settings for Active Config",
             "▶️ Play From Any Config",
@@ -483,141 +483,81 @@ private fun showWorkflowHubDialog() {
 
 
 private fun showSelectStartConfigForWorkflowDialog() {
-    val configs = GestureStore.getAllConfigNames(this)
-        .filter { GestureStore.hasRecordingForConfig(this, it) }
-        .distinct()
+        val configs = GestureStore.getAllConfigNames(this)
+            .filter { GestureStore.hasRecordingForConfig(this, it) }
+            .distinct()
 
-    if (configs.size < 2) {
-        Toast.makeText(this, "Workflow ke liye kam se kam 2 saved configs chahiye", Toast.LENGTH_LONG).show()
-        return
+        if (configs.size < 2) {
+            Toast.makeText(this, "Workflow ke liye kam se kam 2 saved configs chahiye", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Step 1: Pehle kaun si config chale?")
+            .setItems(configs.toTypedArray()) { _, which ->
+                val startConfig = configs[which]
+                GestureStore.setActiveConfigName(this, startConfig)
+                refreshConfigLabel()
+                if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
+                if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
+                showSelectNextConfigForWorkflowDialog(startConfig)
+            }
+            .create()
+
+        showOverlayDialogSafely(dialog)
     }
 
-    val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-        .setTitle("Step 1: Pehle kaun si config chale?")
-        .setItems(configs.toTypedArray()) { _, which ->
-            val startConfig = configs[which]
+    private fun showSelectNextConfigForWorkflowDialog(startConfig: String) {
+        val nextConfigs = GestureStore.getAllConfigNames(this)
+            .filter { it != startConfig && GestureStore.hasRecordingForConfig(this, it) }
+            .distinct()
 
-            GestureStore.setNextConfig(this, startConfig, null)
-            GestureStore.setActiveConfigName(this, startConfig)
-
-            refreshConfigLabel()
-            if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
-            if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
-
-            showSelectNextConfigForWorkflowDialog(
-                currentConfig = startConfig,
-                stepNumber = 2,
-                originalStartConfig = startConfig
-            )
+        if (nextConfigs.isEmpty()) {
+            Toast.makeText(this, "Next step ke liye koi saved config nahi mili", Toast.LENGTH_LONG).show()
+            return
         }
-        .setCancelable(false)
-        .create()
 
-    showOverlayDialogSafely(dialog)
-}
+        val options = mutableListOf("🚫 Stop after $startConfig")
+        options.addAll(nextConfigs)
 
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Step 2: '$startConfig' ke baad kya chale?")
+            .setItems(options.toTypedArray()) { _, which ->
+                if (which == 0) {
+                    GestureStore.setNextConfig(this, startConfig, null)
+                    GestureStore.setActiveConfigName(this, startConfig)
+                    refreshConfigLabel()
+                    if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
+                    if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
+                    Toast.makeText(this, "Workflow: $startConfig only", Toast.LENGTH_SHORT).show()
+                    showLoopChoiceForConfig(startConfig)
+                    return@setItems
+                }
 
+                val nextConfig = options[which]
+                if (GestureStore.wouldCreateCycle(this, startConfig, nextConfig)) {
+                    Toast.makeText(this, "Cycle ban rahi thi, link block kar di", Toast.LENGTH_LONG).show()
+                    return@setItems
+                }
 
+                val ok = GestureStore.setNextConfig(this, startConfig, nextConfig)
+                GestureStore.setActiveConfigName(this, startConfig)
+                refreshConfigLabel()
+                if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
+                if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
+                restorePanelUI()
 
-
-    private fun showSelectNextConfigForWorkflowDialog(
-    currentConfig: String,
-    stepNumber: Int = 2,
-    originalStartConfig: String = currentConfig
-) {
-    val alreadyChosen = GestureStore.getWorkflowChain(this, originalStartConfig, 200)
-        .map { it.trim() }
-        .toSet()
-
-    val nextConfigs = GestureStore.getAllConfigNames(this)
-        .filter { candidate ->
-            candidate != currentConfig &&
-                !alreadyChosen.contains(candidate) &&
-                GestureStore.hasRecordingForConfig(this, candidate)
-        }
-        .distinct()
-
-    val options = mutableListOf("🛑 STOP CHAINING (Go to Loop Settings)")
-    options.addAll(nextConfigs)
-
-    val adapter = object : android.widget.ArrayAdapter<String>(
-        this,
-        android.R.layout.simple_list_item_1,
-        options
-    ) {
-        override fun getView(
-            position: Int,
-            convertView: android.view.View?,
-            parent: android.view.ViewGroup
-        ): android.view.View {
-            val row = super.getView(position, convertView, parent)
-            row.findViewById<android.widget.TextView>(android.R.id.text1)?.apply {
-                if (position == 0) {
-                    setTextColor(android.graphics.Color.rgb(220, 38, 38))
-                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                if (ok) {
+                    Toast.makeText(this, "Linked: $startConfig ➜ $nextConfig", Toast.LENGTH_LONG).show()
+                    showLoopChoiceForConfig(startConfig)
+                } else {
+                    Toast.makeText(this, "Link save nahi hui", Toast.LENGTH_LONG).show()
                 }
             }
-            return row
-        }
+            .create()
+
+        showOverlayDialogSafely(dialog)
     }
-
-    val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-        .setTitle("Step $stepNumber: '$currentConfig' ke baad kya chale?")
-        .setAdapter(adapter) { _, which ->
-            if (which == 0) {
-                GestureStore.setNextConfig(this, currentConfig, null)
-                GestureStore.setActiveConfigName(this, originalStartConfig)
-
-                refreshConfigLabel()
-                if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
-                if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
-                restorePanelUI()
-
-                Toast.makeText(this, "Chain complete! Ab loop select karo.", Toast.LENGTH_SHORT).show()
-                showLoopChoiceForConfig(originalStartConfig)
-                return@setAdapter
-            }
-
-            val nextConfig = options[which]
-
-            GestureStore.setNextConfig(this, nextConfig, null)
-
-            if (GestureStore.wouldCreateCycle(this, currentConfig, nextConfig)) {
-                Toast.makeText(this, "Cycle ban rahi thi, link block kar di", Toast.LENGTH_LONG).show()
-                showSelectNextConfigForWorkflowDialog(currentConfig, stepNumber, originalStartConfig)
-                return@setAdapter
-            }
-
-            val ok = GestureStore.setNextConfig(this, currentConfig, nextConfig)
-            if (ok) {
-                GestureStore.setActiveConfigName(this, originalStartConfig)
-
-                refreshConfigLabel()
-                if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
-                if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
-                restorePanelUI()
-
-                Toast.makeText(this, "Linked: $currentConfig ➜ $nextConfig", Toast.LENGTH_SHORT).show()
-
-                showSelectNextConfigForWorkflowDialog(
-                    currentConfig = nextConfig,
-                    stepNumber = stepNumber + 1,
-                    originalStartConfig = originalStartConfig
-                )
-            } else {
-                Toast.makeText(this, "Link save nahi hui", Toast.LENGTH_LONG).show()
-                showSelectNextConfigForWorkflowDialog(currentConfig, stepNumber, originalStartConfig)
-            }
-        }
-        .setCancelable(false)
-        .create()
-
-    showOverlayDialogSafely(dialog)
-}
-
-
-
-
 
     private fun showLoopChoiceForConfig(configName: String) {
         val items = arrayOf(

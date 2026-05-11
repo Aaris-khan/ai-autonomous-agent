@@ -25,7 +25,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
 
         isWaitingForPermission = savedInstanceState?.getBoolean(KEY_WAITING_PERMISSION, false) ?: false
-        lastPermissionLaunchAt = savedInstanceState?.getLong(KEY_LAST_PERMISSION_LAUNCH_AT, 0L) ?: 0L
+        lastPermissionLaunchAt = 0L
         notificationPermissionAskedThisSession = savedInstanceState?.getBoolean(KEY_NOTIFICATION_ASKED, false) ?: false
         lastPermissionScreen = savedInstanceState?.getString(KEY_LAST_PERMISSION_SCREEN)
         autoPermissionPromptDone = savedInstanceState?.getBoolean(KEY_AUTO_PERMISSION_PROMPT_DONE, false) ?: false
@@ -79,17 +79,12 @@ class MainActivity : Activity() {
                 Toast.makeText(this, "Overlay permission ON karo", Toast.LENGTH_LONG).show()
                 isWaitingForPermission = true
                 lastPermissionScreen = "overlay"
-                try {
-                    startActivity(
-                        Intent(
-                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:$packageName")
-                        )
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")
                     )
-                } catch (e: Exception) {
-                    isWaitingForPermission = false
-                    Toast.makeText(this, "Overlay settings open nahi hui: ${e.message}", Toast.LENGTH_LONG).show()
-                }
+                )
             }
             return
         }
@@ -99,12 +94,7 @@ class MainActivity : Activity() {
                 Toast.makeText(this, "Accessibility Service ON karo", Toast.LENGTH_LONG).show()
                 isWaitingForPermission = true
                 lastPermissionScreen = "accessibility"
-                try {
-                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                } catch (e: Exception) {
-                    isWaitingForPermission = false
-                    Toast.makeText(this, "Accessibility settings open nahi hui: ${e.message}", Toast.LENGTH_LONG).show()
-                }
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
             return
         }
@@ -185,7 +175,7 @@ class MainActivity : Activity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putBoolean(KEY_WAITING_PERMISSION, isWaitingForPermission)
-        outState.putLong(KEY_LAST_PERMISSION_LAUNCH_AT, lastPermissionLaunchAt)
+        outState.putLong(KEY_LAST_PERMISSION_LAUNCH_AT, 0L)
         outState.putBoolean(KEY_NOTIFICATION_ASKED, notificationPermissionAskedThisSession)
         outState.putString(KEY_LAST_PERMISSION_SCREEN, lastPermissionScreen)
         outState.putBoolean(KEY_AUTO_PERMISSION_PROMPT_DONE, autoPermissionPromptDone)
