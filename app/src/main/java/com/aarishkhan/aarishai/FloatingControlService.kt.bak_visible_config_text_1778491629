@@ -552,14 +552,9 @@ private fun showSelectStartConfigForWorkflowDialog() {
         ): android.view.View {
             val row = super.getView(position, convertView, parent)
             row.findViewById<android.widget.TextView>(android.R.id.text1)?.apply {
-                textSize = 20f
-                setPadding(18, 16, 18, 16)
                 if (position == 0) {
                     setTextColor(android.graphics.Color.rgb(220, 38, 38))
                     setTypeface(typeface, android.graphics.Typeface.BOLD)
-                } else {
-                    setTextColor(android.graphics.Color.WHITE)
-                    setTypeface(null, android.graphics.Typeface.NORMAL)
                 }
             }
             return row
