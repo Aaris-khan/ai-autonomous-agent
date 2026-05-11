@@ -421,7 +421,7 @@ class FloatingControlService : Service() {
         btnWorkflow.text = if (chain.size > 1) "🧱 ${chain.size}" else "🧱 WF"
     }
 
-    private fun showWorkflowHubDialog() {
+private fun showWorkflowHubDialog() {
         if (isRecording || AutoActionService.isPlaying() || unsavedGestures.isNotEmpty()) {
             Toast.makeText(this, "Recording/Play/Unsaved edit ke time workflow change nahi kar sakte", Toast.LENGTH_SHORT).show()
             return
@@ -431,6 +431,7 @@ class FloatingControlService : Service() {
         val chainText = GestureStore.getWorkflowSummary(this, active)
         val mode = GestureStore.getLoopModeForConfig(this, active)
         val value = GestureStore.getLoopValueForConfig(this, active)
+
         val loopText = when (mode) {
             "COUNT" -> "Loop: $value cycles"
             "INFINITE" -> "Loop: Infinity"
@@ -439,36 +440,187 @@ class FloatingControlService : Service() {
         }
 
         val items = arrayOf(
-            "➕ Add / Change Next Step",
-            "🚫 Remove Next Link",
-            "🧹 Clear Full Chain From Here",
-            "🔁 Loop Settings",
-            "👀 Preview Chain",
-            "▶️ Play Workflow"
+            "🧩 Build Workflow: START ➜ NEXT ➜ LOOP",
+            "➕ Change NEXT for Active Config",
+            "🔁 Loop Settings for Active Config",
+            "▶️ Play From Any Config",
+            "👀 Preview Active Workflow",
+            "🧹 Clear Active Chain Links"
         )
 
         val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("Workflow Builder")
-            .setMessage("Start: $active\n$loopText\n$chainText")
+            .setTitle("Workflow Builder • $active")
             .setItems(items) { _, which ->
                 when (which) {
-                    0 -> showChooseNextConfigDialog(active)
-                    1 -> {
-                        GestureStore.setNextConfig(this, active, null)
-                        updateWorkflowButtonUI()
-                        Toast.makeText(this, "Next link delete ho gayi", Toast.LENGTH_SHORT).show()
-                    }
-                    2 -> showClearFullChainDialog()
-                    3 -> showLoopSettingsDialog()
+                    0 -> showSelectStartConfigForWorkflowDialog()
+                    1 -> showChooseNextConfigDialog(active)
+                    2 -> showLoopChoiceForConfig(active)
+                    3 -> showPlayFromAnyConfigDialog()
                     4 -> showWorkflowPreviewDialog()
-                    5 -> {
-                        if (!GestureStore.hasRecording(this)) {
-                            Toast.makeText(this, "Active config me recording nahi hai", Toast.LENGTH_SHORT).show()
-                        } else {
-                            handleStartButton()
-                        }
+                    5 -> showClearFullChainDialog()
+                }
+            }
+            .create()
+
+        showOverlayDialogSafely(dialog)
+    }
+
+
+private fun showSelectStartConfigForWorkflowDialog() {
+        val configs = GestureStore.getAllConfigNames(this)
+            .filter { GestureStore.hasRecordingForConfig(this, it) }
+            .distinct()
+
+        if (configs.size < 2) {
+            Toast.makeText(this, "Workflow ke liye kam se kam 2 saved configs chahiye", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Step 1: Pehle kaun si config chale?")
+            .setItems(configs.toTypedArray()) { _, which ->
+                val startConfig = configs[which]
+                GestureStore.setActiveConfigName(this, startConfig)
+                refreshConfigLabel()
+                if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
+                if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
+                showSelectNextConfigForWorkflowDialog(startConfig)
+            }
+            .create()
+
+        showOverlayDialogSafely(dialog)
+    }
+
+    private fun showSelectNextConfigForWorkflowDialog(startConfig: String) {
+        val nextConfigs = GestureStore.getAllConfigNames(this)
+            .filter { it != startConfig && GestureStore.hasRecordingForConfig(this, it) }
+            .distinct()
+
+        if (nextConfigs.isEmpty()) {
+            Toast.makeText(this, "Next step ke liye koi saved config nahi mili", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val options = mutableListOf("🚫 Stop after $startConfig")
+        options.addAll(nextConfigs)
+
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Step 2: '$startConfig' ke baad kya chale?")
+            .setItems(options.toTypedArray()) { _, which ->
+                if (which == 0) {
+                    GestureStore.setNextConfig(this, startConfig, null)
+                    GestureStore.setActiveConfigName(this, startConfig)
+                    refreshConfigLabel()
+                    if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
+                    if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
+                    Toast.makeText(this, "Workflow: $startConfig only", Toast.LENGTH_SHORT).show()
+                    showLoopChoiceForConfig(startConfig)
+                    return@setItems
+                }
+
+                val nextConfig = options[which]
+                if (GestureStore.wouldCreateCycle(this, startConfig, nextConfig)) {
+                    Toast.makeText(this, "Cycle ban rahi thi, link block kar di", Toast.LENGTH_LONG).show()
+                    return@setItems
+                }
+
+                val ok = GestureStore.setNextConfig(this, startConfig, nextConfig)
+                GestureStore.setActiveConfigName(this, startConfig)
+                refreshConfigLabel()
+                if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
+                if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
+                restorePanelUI()
+
+                if (ok) {
+                    Toast.makeText(this, "Linked: $startConfig ➜ $nextConfig", Toast.LENGTH_LONG).show()
+                    showLoopChoiceForConfig(startConfig)
+                } else {
+                    Toast.makeText(this, "Link save nahi hui", Toast.LENGTH_LONG).show()
+                }
+            }
+            .create()
+
+        showOverlayDialogSafely(dialog)
+    }
+
+    private fun showLoopChoiceForConfig(configName: String) {
+        val items = arrayOf(
+            "▶️ Once",
+            "🔢 Number of Cycles",
+            "⏱️ Minutes",
+            "♾️ Infinity Loop"
+        )
+
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Step 3: '$configName' workflow ko kaise loop karna hai?")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> {
+                        GestureStore.saveLoopSettingsForConfig(this, configName, "ONCE", 1)
+                        Toast.makeText(this, "Ready: $configName • Once", Toast.LENGTH_SHORT).show()
+                    }
+
+                    1 -> showNumberInputDialog(
+                        title = "Kitne cycles chalana hai?",
+                        hint = "Example: 5",
+                        defaultValue = GestureStore.getLoopValueForConfig(this, configName).takeIf { it > 1 } ?: 10,
+                        min = 1,
+                        max = 9999
+                    ) { value ->
+                        GestureStore.saveLoopSettingsForConfig(this, configName, "COUNT", value)
+                        Toast.makeText(this, "Ready: $configName • $value cycles", Toast.LENGTH_SHORT).show()
+                        if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
+                        if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
+                    }
+
+                    2 -> showNumberInputDialog(
+                        title = "Kitne minutes chalana hai?",
+                        hint = "Example: 15",
+                        defaultValue = GestureStore.getLoopValueForConfig(this, configName).takeIf { it > 1 } ?: 5,
+                        min = 1,
+                        max = 1440
+                    ) { value ->
+                        GestureStore.saveLoopSettingsForConfig(this, configName, "TIME", value)
+                        Toast.makeText(this, "Ready: $configName • $value minutes", Toast.LENGTH_SHORT).show()
+                        if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
+                        if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
+                    }
+
+                    3 -> {
+                        GestureStore.saveLoopSettingsForConfig(this, configName, "INFINITE", 0)
+                        Toast.makeText(this, "Ready: $configName • Infinity Loop", Toast.LENGTH_SHORT).show()
                     }
                 }
+
+                if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
+                if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
+                restorePanelUI()
+            }
+            .create()
+
+        showOverlayDialogSafely(dialog)
+    }
+
+    private fun showPlayFromAnyConfigDialog() {
+        val configs = GestureStore.getAllConfigNames(this)
+            .filter { GestureStore.hasRecordingForConfig(this, it) }
+            .distinct()
+
+        if (configs.isEmpty()) {
+            Toast.makeText(this, "Play ke liye koi saved config nahi mili", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Kaun si config se workflow start karna hai?")
+            .setItems(configs.toTypedArray()) { _, which ->
+                val selected = configs[which]
+                GestureStore.setActiveConfigName(this, selected)
+                refreshConfigLabel()
+                if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
+                if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
+                restorePanelUI()
+                handleStartButton()
             }
             .create()
 
@@ -514,57 +666,11 @@ class FloatingControlService : Service() {
         showOverlayDialogSafely(dialog)
     }
 
-    private fun showLoopSettingsDialog() {
+private fun showLoopSettingsDialog() {
         val active = GestureStore.getActiveConfigName(this)
-        val items = arrayOf(
-            "▶️ Once",
-            "🔢 Number of Cycles",
-            "⏱️ Minutes",
-            "♾️ Infinity Loop"
-        )
-
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("Loop Settings for '$active'")
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> {
-                        GestureStore.saveLoopSettingsForConfig(this, active, "ONCE", 1)
-                        updateLoopButtonText(btnLoop)
-                        Toast.makeText(this, "Loop: Once", Toast.LENGTH_SHORT).show()
-                    }
-                    1 -> showNumberInputDialog(
-                        title = "Kitne cycles chalana hai?",
-                        hint = "Example: 5",
-                        defaultValue = GestureStore.getLoopValueForConfig(this, active).takeIf { it > 1 } ?: 10,
-                        min = 1,
-                        max = 9999
-                    ) { value ->
-                        GestureStore.saveLoopSettingsForConfig(this, active, "COUNT", value)
-                        updateLoopButtonText(btnLoop)
-                        Toast.makeText(this, "Loop: $value cycles", Toast.LENGTH_SHORT).show()
-                    }
-                    2 -> showNumberInputDialog(
-                        title = "Kitne minutes chalana hai?",
-                        hint = "Example: 15",
-                        defaultValue = GestureStore.getLoopValueForConfig(this, active).takeIf { it > 1 } ?: 5,
-                        min = 1,
-                        max = 1440
-                    ) { value ->
-                        GestureStore.saveLoopSettingsForConfig(this, active, "TIME", value)
-                        updateLoopButtonText(btnLoop)
-                        Toast.makeText(this, "Loop: $value minutes", Toast.LENGTH_SHORT).show()
-                    }
-                    3 -> {
-                        GestureStore.saveLoopSettingsForConfig(this, active, "INFINITE", 0)
-                        updateLoopButtonText(btnLoop)
-                        Toast.makeText(this, "Loop: Infinity", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
-            .create()
-
-        showOverlayDialogSafely(dialog)
+        showLoopChoiceForConfig(active)
     }
+
 
     private fun showNumberInputDialog(
         title: String,
