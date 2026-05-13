@@ -574,8 +574,14 @@ private fun restorePanelUI() {
         prepareOverlayDialog(dialog)
 
         dialog.window?.apply {
-            setDimAmount(0.18f)
-            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+            setDimAmount(0.45f)
+            setBackgroundDrawable(
+                android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = dp(22).toFloat()
+                    setColor(android.graphics.Color.rgb(255, 255, 255))
+                    setStroke(dp(1), android.graphics.Color.rgb(226, 232, 240))
+                }
+            )
 
             val lp = attributes
             val screenW = resources.displayMetrics.widthPixels
@@ -642,7 +648,7 @@ private fun showSmartToolsDialog() {
         "🐢 Slow Down Macro"
     )
 
-    val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+    val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
         .setTitle("Smart Tools • $active")
         .setItems(items) { _, which ->
             when (which) {
@@ -1048,7 +1054,7 @@ private fun showActiveMacroInfoDialog() {
     }
     val tapMode = GestureStore.getTapAccuracyModeLabel(this)
 
-    val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+    val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
         .setTitle("Macro Info")
         .setMessage(
             "Config: $active\n" +
@@ -1080,7 +1086,7 @@ private fun showTapAccuracyModeDialog() {
     val current = GestureStore.getTapAccuracyMode(this)
     val checked = modes.indexOf(current).takeIf { it >= 0 } ?: 0
 
-    val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+    val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
         .setTitle("Smart Tap Accuracy")
         .setSingleChoiceItems(labels, checked) { popup, which ->
             GestureStore.saveTapAccuracyMode(this, modes[which])
@@ -1517,7 +1523,7 @@ private fun showWorkflowHubDialog() {
             "🧹 Clear Active Chain Links"
         )
 
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
             .setTitle("Workflow Builder • $active")
             .setItems(items) { _, which ->
                 when (which) {
@@ -1545,7 +1551,7 @@ private fun showSelectStartConfigForWorkflowDialog() {
         return
     }
 
-    val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+    val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
         .setTitle("Step 1: Pehle kaun si config chale?")
         .setItems(configs.toTypedArray()) { _, which ->
             val startConfig = configs[which]
@@ -1621,7 +1627,7 @@ private fun showSelectStartConfigForWorkflowDialog() {
         }
     }
 
-    val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+    val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
         .setTitle("Step $stepNumber: '$currentConfig' ke baad kya chale?")
         .setAdapter(adapter) { _, which ->
             if (which == 0) {
@@ -1687,7 +1693,7 @@ private fun showSelectStartConfigForWorkflowDialog() {
             "♾️ Infinity Loop"
         )
 
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
             .setTitle("Step 3: '$configName' workflow ko kaise loop karna hai?")
             .setItems(items) { _, which ->
                 when (which) {
@@ -1747,7 +1753,7 @@ private fun showSelectStartConfigForWorkflowDialog() {
             return
         }
 
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
             .setTitle("Kaun si config se workflow start karna hai?")
             .setItems(configs.toTypedArray()) { _, which ->
                 val selected = configs[which]
@@ -1776,7 +1782,7 @@ private fun showSelectStartConfigForWorkflowDialog() {
         val options = mutableListOf("🚫 Stop Here / Remove Link")
         options.addAll(candidates)
 
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
             .setTitle("After '$currentConfig' run:")
             .setItems(options.toTypedArray()) { _, which ->
                 if (which == 0) {
@@ -1825,7 +1831,7 @@ private fun showLoopSettingsDialog() {
             setPadding(dp(18), dp(12), dp(18), dp(12))
         }
 
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
             .setTitle(title)
             .setView(input)
             .setPositiveButton("Save", null)
@@ -1859,7 +1865,7 @@ private fun showLoopSettingsDialog() {
             else -> "Once"
         }
 
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
             .setTitle("Workflow Preview")
             .setMessage("Chain:\n$chain\n\nLoop:\n$loopText\n\nPLAY dabane par yahi poora workflow chalega.")
             .setPositiveButton("OK", null)
@@ -1871,7 +1877,7 @@ private fun showLoopSettingsDialog() {
     private fun showClearFullChainDialog() {
         val active = GestureStore.getActiveConfigName(this)
 
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
             .setTitle("Clear Full Chain?")
             .setMessage("Isse '$active' se aage jitni linked sequence hai, uske links delete ho jayenge. Recordings delete nahi hongi.")
             .setPositiveButton("Clear Links") { _, _ ->
@@ -1898,7 +1904,7 @@ private fun showLoopSettingsDialog() {
             "➕ Create New Config"
         )).toTypedArray()
 
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
             .setTitle("Macro Configs • $active")
             .setItems(items) { _, which ->
                 when {
@@ -1962,7 +1968,7 @@ private fun showLoopSettingsDialog() {
             setPadding(dp(18), dp(12), dp(18), dp(12))
         }
 
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
             .setTitle("Create Config Block")
             .setView(input)
             .setPositiveButton("Create", null)
@@ -2140,7 +2146,7 @@ private fun showLoopSettingsDialog() {
             return
         }
 
-        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
             .setTitle("Record System Action")
             .setItems(arrayOf("🔙 BACK", "🗂️ RECENTS")) { _, which ->
                 when (which) {
