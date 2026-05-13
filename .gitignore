@@ -1,0 +1,7 @@
+
+# Android resource folder must not contain backup/temp files
+app/src/main/res/**/*.bak*
+app/src/main/res/**/*.orig
+app/src/main/res/**/*.old
+app/src/main/res/**/*.tmp
+app/src/main/res/**/*~
