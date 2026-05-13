@@ -60,26 +60,6 @@ class AutoActionService : AccessibilityService() {
         ): TargetSnapshot? {
             return instance?.captureTargetSnapshotInternal(x, y, screenW, screenH)
         }
-
-        // AARISH_PRESS_REPLAY_PRO_V2_START
-        fun playSingleLiveGestureSafe(gesture: RecordedGesture, onComplete: () -> Unit) {
-            val service = instance
-            if (service != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
-                service.fireLiveReplaySafe(gesture, onComplete)
-            } else {
-                onComplete()
-            }
-        }
-
-        fun performLiveSystemActionSafe(actionType: Int, onComplete: () -> Unit) {
-            val service = instance
-            if (service != null) {
-                service.performLiveSystemActionInternal(actionType, onComplete)
-            } else {
-                onComplete()
-            }
-        }
-        // AARISH_PRESS_REPLAY_PRO_V2_END
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -167,297 +147,6 @@ class AutoActionService : AccessibilityService() {
             aarishCpuWakeLock = null
         }
     }
-
-
-
-    // AARISH_PRESS_REPLAY_PRO_V2_START
-    private fun dispatchLongPressChunksSafe(
-        x: Float,
-        y: Float,
-        totalDuration: Long,
-        runId: Int?,
-        onDone: (Boolean) -> Unit
-    ) {
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.N) {
-            onDone(false)
-            return
-        }
-
-        val screenW = (resources.displayMetrics.widthPixels.toFloat() - 2f).coerceAtLeast(2f)
-        val screenH = (resources.displayMetrics.heightPixels.toFloat() - 2f).coerceAtLeast(2f)
-        val safeX = x.coerceIn(2f, screenW)
-        val safeY = y.coerceIn(2f, screenH)
-        // AARISH_LONG_PRESS_STOP_RESPONSIVE_V1:
-        // Android O+ supports continueStroke(), so smaller chunks make STOP respond fast.
-        // Android N keeps 59s chunks because continueStroke is not available there.
-        val maxChunk = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) 3500L else 59000L
-        var remaining = totalDuration.coerceIn(55L, 600000L)
-        var previousStroke: GestureDescription.StrokeDescription? = null
-        var finished = false
-        var watchdog: Runnable? = null
-
-        fun currentRunOk(): Boolean {
-            return runId == null || isSamePlaybackRun(runId)
-        }
-
-        fun makePath(): Path {
-            return Path().apply {
-                moveTo(safeX, safeY)
-                lineTo((safeX + 1.6f).coerceIn(2f, screenW), (safeY + 1.6f).coerceIn(2f, screenH))
-            }
-        }
-
-        fun clearWatchdog() {
-            watchdog?.let {
-                handler.removeCallbacks(it)
-                scheduledTasks.remove(it)
-            }
-            watchdog = null
-        }
-
-        fun finishOnce(ok: Boolean) {
-            if (finished) return
-            finished = true
-            clearWatchdog()
-            onDone(ok)
-        }
-
-        fun armWatchdog(ms: Long) {
-            clearWatchdog()
-            val task = Runnable {
-                if (!finished) finishOnce(false)
-            }
-            watchdog = task
-            if (runId != null) scheduledTasks.add(task)
-            handler.postDelayed(task, (ms + 3200L).coerceAtMost(65000L))
-        }
-
-        fun dispatchNext() {
-            if (finished) return
-            if (!currentRunOk()) {
-                finishOnce(false)
-                return
-            }
-
-            val chunk = remaining.coerceAtMost(maxChunk).coerceAtLeast(55L)
-            val moreAfterThis = remaining > chunk
-
-            val stroke = try {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                    val path = makePath()
-                    val prev = previousStroke
-                    if (prev != null) {
-                        prev.continueStroke(path, 0L, chunk, moreAfterThis)
-                    } else {
-                        GestureDescription.StrokeDescription(path, 0L, chunk, moreAfterThis)
-                    }
-                } else {
-                    GestureDescription.StrokeDescription(makePath(), 0L, chunk)
-                }
-            } catch (_: Exception) {
-                finishOnce(false)
-                return
-            }
-
-            previousStroke = stroke
-
-            val gesture = try {
-                GestureDescription.Builder().addStroke(stroke).build()
-            } catch (_: Exception) {
-                finishOnce(false)
-                return
-            }
-
-            armWatchdog(chunk)
-
-            val accepted = dispatchGesture(
-                gesture,
-                object : AccessibilityService.GestureResultCallback() {
-                    override fun onCompleted(gestureDescription: GestureDescription?) {
-                        super.onCompleted(gestureDescription)
-                        clearWatchdog()
-
-                        if (!currentRunOk()) {
-                            finishOnce(false)
-                            return
-                        }
-
-                        remaining = (remaining - chunk).coerceAtLeast(0L)
-
-                        if (remaining <= 0L || !moreAfterThis || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) {
-                            finishOnce(true)
-                        } else {
-                            handler.post { dispatchNext() }
-                        }
-                    }
-
-                    override fun onCancelled(gestureDescription: GestureDescription?) {
-                        super.onCancelled(gestureDescription)
-                        finishOnce(false)
-                    }
-                },
-                null
-            )
-
-            if (!accepted) finishOnce(false)
-        }
-
-        dispatchNext()
-    }
-
-    private fun performLiveSystemActionInternal(actionType: Int, onComplete: () -> Unit) {
-        handler.post {
-            if (isPlayingInternal) {
-                onComplete()
-                return@post
-            }
-
-            val action = when (actionType) {
-                1 -> GLOBAL_ACTION_BACK
-                2 -> GLOBAL_ACTION_RECENTS
-                else -> -1
-            }
-
-            if (action == -1) {
-                onComplete()
-                return@post
-            }
-
-            try {
-                performGlobalAction(action)
-            } catch (_: Exception) {
-            }
-
-            handler.postDelayed({ onComplete() }, 430L)
-        }
-    }
-
-    private fun fireLiveReplaySafe(gesture: RecordedGesture, onComplete: () -> Unit) {
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.N) {
-            onComplete()
-            return
-        }
-
-        handler.post {
-            if (instance !== this@AutoActionService || isPlayingInternal) {
-                onComplete()
-                return@post
-            }
-
-            val raw = gesture.points
-                .filter { !it.x.isNaN() && !it.x.isInfinite() && !it.y.isNaN() && !it.y.isInfinite() }
-                .sortedBy { it.t.coerceAtLeast(0L) }
-                .take(900)
-
-            if (raw.isEmpty()) {
-                onComplete()
-                return@post
-            }
-
-            val firstRaw = raw.first()
-
-            if (firstRaw.x <= -50f) {
-                val systemAction = when (firstRaw.x.toInt()) {
-                    -100 -> 1
-                    -200 -> 2
-                    else -> 0
-                }
-
-                if (systemAction > 0) {
-                    performLiveSystemActionInternal(systemAction, onComplete)
-                } else {
-                    onComplete()
-                }
-                return@post
-            }
-
-            val screenW = (resources.displayMetrics.widthPixels.toFloat() - 2f).coerceAtLeast(2f)
-            val screenH = (resources.displayMetrics.heightPixels.toFloat() - 2f).coerceAtLeast(2f)
-            val baseT = raw.first().t.coerceAtLeast(0L)
-
-            val points = raw.map { point ->
-                point.copy(
-                    x = point.x.coerceIn(2f, screenW),
-                    y = point.y.coerceIn(2f, screenH),
-                    t = (point.t.coerceAtLeast(0L) - baseT).coerceAtLeast(0L).coerceAtMost(600000L)
-                )
-            }
-
-            val first = points.first()
-            val path = Path()
-            path.moveTo(first.x, first.y)
-
-            var moved = false
-            var lastT = 0L
-
-            for (i in 1 until points.size) {
-                val p = points[i]
-                if (abs(p.x - first.x) > 8f || abs(p.y - first.y) > 8f) {
-                    moved = true
-                }
-                lastT = max(lastT, p.t)
-                path.lineTo(p.x, p.y)
-            }
-
-            if (!moved) {
-                path.lineTo(
-                    (first.x + 1.8f).coerceIn(2f, screenW),
-                    (first.y + 1.8f).coerceIn(2f, screenH)
-                )
-                lastT = max(lastT, 70L)
-            }
-
-            val duration = max(55L, lastT).coerceAtMost(600000L)
-
-            if (!moved && duration > 59000L) {
-                dispatchLongPressChunksSafe(first.x, first.y, duration, null) {
-                    handler.post { onComplete() }
-                }
-                return@post
-            }
-
-            var finished = false
-            var watchdog: Runnable? = null
-
-            fun finishOnce() {
-                if (finished) return
-                finished = true
-                watchdog?.let { handler.removeCallbacks(it) }
-                handler.post { onComplete() }
-            }
-
-            try {
-                val safeDuration = duration.coerceAtMost(59000L)
-                val desc = GestureDescription.Builder()
-                    .addStroke(GestureDescription.StrokeDescription(path, 0L, safeDuration))
-                    .build()
-
-                watchdog = Runnable { finishOnce() }
-                handler.postDelayed(watchdog!!, (safeDuration + 3200L).coerceAtMost(65000L))
-
-                val accepted = dispatchGesture(
-                    desc,
-                    object : AccessibilityService.GestureResultCallback() {
-                        override fun onCompleted(gestureDescription: GestureDescription?) {
-                            super.onCompleted(gestureDescription)
-                            finishOnce()
-                        }
-
-                        override fun onCancelled(gestureDescription: GestureDescription?) {
-                            super.onCancelled(gestureDescription)
-                            finishOnce()
-                        }
-                    },
-                    null
-                )
-
-                if (!accepted) finishOnce()
-            } catch (_: Exception) {
-                finishOnce()
-            }
-        }
-    }
-    // AARISH_PRESS_REPLAY_PRO_V2_END
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -731,7 +420,7 @@ private fun stopPlaybackInternal(showToast: Boolean = true) {
     }
 
     private fun scheduleGestureWatchdog(runId: Int, timeoutMs: Long, token: Int): Runnable {
-        val safeTimeout = timeoutMs.coerceIn(900L, 610000L)
+        val safeTimeout = timeoutMs.coerceIn(900L, 65000L)
         val task = object : Runnable {
             override fun run() {
                 scheduledTasks.remove(this)
@@ -784,7 +473,7 @@ private fun stopPlaybackInternal(showToast: Boolean = true) {
         }
 
         val movement = hasRealMovement(points)
-        val duration = kotlin.math.max(50L, points.maxOf { it.t.coerceAtLeast(0L) }).coerceAtMost(600000L)
+        val duration = kotlin.math.max(50L, points.maxOf { it.t.coerceAtLeast(0L) }).coerceAtMost(60000L)
         val match = if (!movement || hasStrongSavedIdentity(recordedGesture) || hasSavedPercentAnchor(recordedGesture)) {
             findBestSmartTarget(recordedGesture)
         } else {
@@ -911,7 +600,7 @@ private fun stopPlaybackInternal(showToast: Boolean = true) {
 
                     val movement = hasRealMovement(orderedPoints)
                     val duration = kotlin.math.max(50L, orderedPoints.maxOf { it.t.coerceAtLeast(0L) })
-                        .coerceAtMost(600000L)
+                        .coerceAtMost(60000L)
                     val retryMatch = if (!movement || hasStrongSavedIdentity(recordedGesture) || hasSavedPercentAnchor(recordedGesture)) {
                         findBestSmartTarget(recordedGesture)
                     } else {
@@ -3078,7 +2767,6 @@ private fun hasRealMovement(points: List<GesturePoint>): Boolean {
         return maxDx > slop || maxDy > slop
     }
 
-
 private fun performGestureAt(
     startX: Float,
     startY: Float,
@@ -3093,13 +2781,9 @@ private fun performGestureAt(
         return
     }
 
-    val orderedPoints = points
-        .filter { !it.x.isNaN() && !it.x.isInfinite() && !it.y.isNaN() && !it.y.isInfinite() }
-        .sortedBy { it.t.coerceAtLeast(0L) }
-        .ifEmpty { return }
-
+    val orderedPoints = points.sortedBy { it.t.coerceAtLeast(0L) }
     val firstPoint = orderedPoints.first()
-    val maxPathPoints = 260
+    val maxPathPoints = 220
     val step = if (orderedPoints.size > maxPathPoints) {
         kotlin.math.max(1, orderedPoints.size / maxPathPoints)
     } else {
@@ -3136,12 +2820,13 @@ private fun performGestureAt(
     if (playbackPoints.size > 1) {
         for (i in 1 until playbackPoints.size) {
             val p = playbackPoints[i]
-            val shiftedX = safeStartX + ((p.x - firstPoint.x) * scaleX)
-            val shiftedY = safeStartY + ((p.y - firstPoint.y) * scaleY)
 
-            if (abs(shiftedX - safeStartX) > 8f || abs(shiftedY - safeStartY) > 8f) {
+            if (abs(p.x - firstPoint.x) > 8f || abs(p.y - firstPoint.y) > 8f) {
                 movement = true
             }
+
+            val shiftedX = safeStartX + ((p.x - firstPoint.x) * scaleX)
+            val shiftedY = safeStartY + ((p.y - firstPoint.y) * scaleY)
 
             path.lineTo(
                 shiftedX.coerceIn(2f, screenW),
@@ -3157,26 +2842,16 @@ private fun performGestureAt(
         )
     }
 
-    val duration = max(50L, orderedPoints.last().t.coerceAtLeast(0L)).coerceAtMost(600000L)
-
-    if (!movement && duration > 59000L) {
-        val token = beginActiveGesture()
-        dispatchLongPressChunksSafe(safeStartX, safeStartY, duration, runId) {
-            if (isCurrentCallbackRun(runId)) finishActiveGesture(token)
-        }
-        return
-    }
-
+    val duration = max(50L, orderedPoints.last().t).coerceAtMost(60000L)
     val token = beginActiveGesture()
     var watchdog: Runnable? = null
 
     try {
-        val safeDuration = duration.coerceAtMost(59000L)
         val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0L, safeDuration))
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, duration))
             .build()
 
-        watchdog = scheduleGestureWatchdog(runId, safeDuration + 3200L, token)
+        watchdog = scheduleGestureWatchdog(runId, duration + 2500L, token)
 
         val accepted = dispatchGesture(
             gesture,
@@ -3219,7 +2894,6 @@ private fun performGestureAt(
         Toast.makeText(this, "Ek gesture invalid tha, skip kar diya", Toast.LENGTH_SHORT).show()
     }
 }
-
 
     private fun getRealAppRootForPoint(tapX: Int?, tapY: Int?): AccessibilityNodeInfo? {
         val myPackage = packageName
@@ -3515,25 +3189,18 @@ private fun captureTargetSnapshotInternal(
         val screenH = (resources.displayMetrics.heightPixels.toFloat() - 2f).coerceAtLeast(2f)
         val safeX = startX.coerceIn(2f, screenW)
         val safeY = startY.coerceIn(2f, screenH)
-        val holdDuration = duration.coerceAtLeast(650L).coerceAtMost(600000L)
+        val holdDuration = duration.coerceAtLeast(650L).coerceAtMost(3500L)
         val callbackDelivered = java.util.concurrent.atomic.AtomicBoolean(false)
-        // AARISH_HYBRID_TIMEOUT_TRACK_FIX_V1:
-        // Track timeout in scheduledTasks so STOP/playback cancel removes stale callbacks too.
-        val timeoutTask = object : Runnable {
-            override fun run() {
-                scheduledTasks.remove(this)
-                if (callbackDelivered.compareAndSet(false, true)) {
-                    onDone(false)
-                }
+        val timeoutTask = Runnable {
+            if (callbackDelivered.compareAndSet(false, true)) {
+                onDone(false)
             }
         }
-        scheduledTasks.add(timeoutTask)
         handler.postDelayed(timeoutTask, holdDuration + if (isDoubleTap) 3200L else 2400L)
 
         fun finishOnce(value: Boolean) {
             if (callbackDelivered.compareAndSet(false, true)) {
                 handler.removeCallbacks(timeoutTask)
-                scheduledTasks.remove(timeoutTask)
                 onDone(value)
             }
         }
@@ -3727,135 +3394,6 @@ private fun captureTargetSnapshotInternal(
         }
     }
 
-
-    // AARISH_SHARE_MENU_LIVE_GUARD_V3_AAS_START
-    private fun isAarishSemanticBridgeBlockedPackage(pkg: String): Boolean {
-        val p = pkg.trim().lowercase()
-        return p.isBlank() ||
-            p == packageName.lowercase() ||
-            p.contains("inputmethod") ||
-            p.contains("keyboard")
-    }
-
-    private fun cleanAarishSnapshotText(value: String?): String? {
-        return value
-            ?.replace(Regex("\\s+"), " ")
-            ?.trim()
-            ?.take(220)
-            ?.takeIf { it.isNotBlank() }
-    }
-
-    private fun firstCleanAarishSnapshot(vararg values: String?): String? {
-        for (value in values) {
-            val cleaned = cleanAarishSnapshotText(value)
-            if (!cleaned.isNullOrBlank()) return cleaned
-        }
-        return null
-    }
-
-
-    private fun buildAarishSemanticSnapshotFromEvent(event: AccessibilityEvent): TargetSnapshot? {
-        val eventPackage = cleanAarishSnapshotText(event.packageName?.toString()?.lowercase())
-        if (eventPackage != null && isAarishSemanticBridgeBlockedPackage(eventPackage)) return null
-
-        val touchedNode = try {
-            event.source
-        } catch (_: Exception) {
-            null
-        } ?: return null
-
-        val clickNode = findClickableParent(touchedNode) ?: touchedNode
-        if (!safeVisible(clickNode) || !safeEnabled(clickNode)) return null
-
-        val clickBounds = Rect()
-        if (!safeBounds(clickNode, clickBounds) || clickBounds.width() <= 0 || clickBounds.height() <= 0) {
-            return null
-        }
-
-        val screenW = resources.displayMetrics.widthPixels.toFloat().coerceAtLeast(1f)
-        val screenH = resources.displayMetrics.heightPixels.toFloat().coerceAtLeast(1f)
-        val screenArea = (screenW * screenH).coerceAtLeast(1f)
-        val areaRatio = ((clickBounds.width().coerceAtLeast(0) * clickBounds.height().coerceAtLeast(0)).toFloat() / screenArea)
-            .coerceIn(0f, 9f)
-
-        val clickText = cleanAarishSnapshotText(safeText(clickNode))
-        val touchText = cleanAarishSnapshotText(safeText(touchedNode))
-        val clickDesc = cleanAarishSnapshotText(safeDesc(clickNode))
-        val touchDesc = cleanAarishSnapshotText(safeDesc(touchedNode))
-        val clickId = cleanAarishSnapshotText(safeId(clickNode))
-        val touchId = cleanAarishSnapshotText(safeId(touchedNode))
-
-        if (
-            areaRatio > 0.86f &&
-            clickText.isNullOrBlank() &&
-            touchText.isNullOrBlank() &&
-            clickDesc.isNullOrBlank() &&
-            touchDesc.isNullOrBlank() &&
-            clickId.isNullOrBlank() &&
-            touchId.isNullOrBlank()
-        ) {
-            return null
-        }
-
-        val centerX = clickBounds.exactCenterX().coerceIn(1f, screenW)
-        val centerY = clickBounds.exactCenterY().coerceIn(1f, screenH)
-
-        val clickOwn = ownLabelOf(clickNode)
-        val touchOwn = ownLabelOf(touchedNode)
-        val clickContext = collectNodeTextLimited(clickNode, 84, 860)
-        val touchContext = collectNodeTextLimited(touchedNode, 52, 560)
-        val siblingContext = listOf(
-            collectSiblingText(touchedNode, 420),
-            collectSiblingText(clickNode, 620)
-        )
-            .filter { it.isNotBlank() }
-            .joinToString(" | ")
-            .take(760)
-        val parentContext = collectNodeTextLimited(safeParent(clickNode), 50, 560)
-        val grandParentContext = collectNodeTextLimited(safeParent(safeParent(clickNode)), 34, 360)
-
-        return TargetSnapshot(
-            targetText = firstCleanAarishSnapshot(clickText, touchText, clickDesc, touchDesc, idTail(clickId), idTail(touchId)),
-            targetDesc = firstCleanAarishSnapshot(clickDesc, touchDesc, clickText, touchText),
-            targetId = firstCleanAarishSnapshot(clickId, touchId),
-            targetClass = firstCleanAarishSnapshot(safeClass(clickNode), safeClass(touchedNode)),
-            targetPackage = firstCleanAarishSnapshot(aarishNodePackage(clickNode), aarishNodePackage(touchedNode), eventPackage),
-
-            targetContextText = listOf(clickOwn, touchOwn, clickContext, touchContext, parentContext, grandParentContext)
-                .filter { it.isNotBlank() }
-                .joinToString(" | ")
-                .take(1100),
-            targetChildText = listOf(touchContext, clickContext)
-                .filter { it.isNotBlank() }
-                .joinToString(" | ")
-                .take(700),
-            targetSiblingText = siblingContext.take(700),
-            targetRoleFlags = listOf(
-                roleFlagsOf(touchedNode),
-                roleFlagsOf(clickNode)
-            )
-                .filter { it.isNotBlank() }
-                .joinToString("|")
-                .take(360),
-            targetTreePath = extractTreePathDNA(clickNode),
-
-            targetLeft = clickBounds.left,
-            targetTop = clickBounds.top,
-            targetRight = clickBounds.right,
-            targetBottom = clickBounds.bottom,
-            xPercent = (centerX / screenW).coerceIn(0f, 1f),
-            yPercent = (centerY / screenH).coerceIn(0f, 1f),
-            targetWPercent = (clickBounds.width() / screenW).coerceIn(0f, 1f),
-            targetHPercent = (clickBounds.height() / screenH).coerceIn(0f, 1f),
-            insideXPercent = 0.5f,
-            insideYPercent = 0.5f,
-            recordedScreenW = screenW.toInt(),
-            recordedScreenH = screenH.toInt()
-        )
-    }
-
-    // AARISH_SHARE_MENU_LIVE_GUARD_V3_AAS_END
-
         override fun onKeyEvent(event: android.view.KeyEvent): Boolean {
         val fcs = FloatingControlService.instance
         val isVolumeKey =
@@ -3868,10 +3406,10 @@ private fun captureTargetSnapshotInternal(
             if (event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                 val ok = if (event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP) {
                     fcs.recordSystemAction(1)
-                    true
+                    performGlobalAction(GLOBAL_ACTION_BACK)
                 } else {
                     fcs.recordSystemAction(2)
-                    true
+                    performGlobalAction(GLOBAL_ACTION_RECENTS)
                 }
 
                 if (!ok) showTinyToast("Volume system action fail hua")
@@ -3883,34 +3421,7 @@ private fun captureTargetSnapshotInternal(
         return super.onKeyEvent(event)
     }
 
-
-
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event == null) return
-
-        val type = event.eventType
-        val floating = FloatingControlService.instance
-
-        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
-            type == AccessibilityEvent.TYPE_WINDOWS_CHANGED
-        ) {
-            floating?.notifyExternalWindowChangedFromAccessibility()
-            return
-        }
-
-        if (type != AccessibilityEvent.TYPE_VIEW_CLICKED) return
-
-        val service = floating ?: return
-        if (!service.shouldRecordAccessibilitySemanticClick()) return
-
-        val pkg = event.packageName?.toString()?.lowercase().orEmpty()
-        if (isAarishSemanticBridgeBlockedPackage(pkg)) return
-
-        val snapshot = buildAarishSemanticSnapshotFromEvent(event) ?: return
-        service.recordAccessibilitySemanticClickFromSnapshot(snapshot)
-    }
-
-
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
 
     override fun onInterrupt() {
         stopPlaybackInternal(showToast = false)

@@ -3753,7 +3753,6 @@ private fun captureTargetSnapshotInternal(
         return null
     }
 
-
     private fun buildAarishSemanticSnapshotFromEvent(event: AccessibilityEvent): TargetSnapshot? {
         val eventPackage = cleanAarishSnapshotText(event.packageName?.toString()?.lowercase())
         if (eventPackage != null && isAarishSemanticBridgeBlockedPackage(eventPackage)) return null
@@ -3774,9 +3773,8 @@ private fun captureTargetSnapshotInternal(
 
         val screenW = resources.displayMetrics.widthPixels.toFloat().coerceAtLeast(1f)
         val screenH = resources.displayMetrics.heightPixels.toFloat().coerceAtLeast(1f)
-        val screenArea = (screenW * screenH).coerceAtLeast(1f)
-        val areaRatio = ((clickBounds.width().coerceAtLeast(0) * clickBounds.height().coerceAtLeast(0)).toFloat() / screenArea)
-            .coerceIn(0f, 9f)
+        val centerX = clickBounds.exactCenterX().coerceIn(1f, screenW)
+        val centerY = clickBounds.exactCenterY().coerceIn(1f, screenH)
 
         val clickText = cleanAarishSnapshotText(safeText(clickNode))
         val touchText = cleanAarishSnapshotText(safeText(touchedNode))
@@ -3784,21 +3782,6 @@ private fun captureTargetSnapshotInternal(
         val touchDesc = cleanAarishSnapshotText(safeDesc(touchedNode))
         val clickId = cleanAarishSnapshotText(safeId(clickNode))
         val touchId = cleanAarishSnapshotText(safeId(touchedNode))
-
-        if (
-            areaRatio > 0.86f &&
-            clickText.isNullOrBlank() &&
-            touchText.isNullOrBlank() &&
-            clickDesc.isNullOrBlank() &&
-            touchDesc.isNullOrBlank() &&
-            clickId.isNullOrBlank() &&
-            touchId.isNullOrBlank()
-        ) {
-            return null
-        }
-
-        val centerX = clickBounds.exactCenterX().coerceIn(1f, screenW)
-        val centerY = clickBounds.exactCenterY().coerceIn(1f, screenH)
 
         val clickOwn = ownLabelOf(clickNode)
         val touchOwn = ownLabelOf(touchedNode)
@@ -3853,7 +3836,6 @@ private fun captureTargetSnapshotInternal(
             recordedScreenH = screenH.toInt()
         )
     }
-
     // AARISH_SHARE_MENU_LIVE_GUARD_V3_AAS_END
 
         override fun onKeyEvent(event: android.view.KeyEvent): Boolean {
@@ -3884,7 +3866,6 @@ private fun captureTargetSnapshotInternal(
     }
 
 
-
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
@@ -3895,21 +3876,21 @@ private fun captureTargetSnapshotInternal(
             type == AccessibilityEvent.TYPE_WINDOWS_CHANGED
         ) {
             floating?.notifyExternalWindowChangedFromAccessibility()
-            return
         }
 
-        if (type != AccessibilityEvent.TYPE_VIEW_CLICKED) return
+        // Jab Android Share Menu / chooser / dialog glass ke upar aa jaye aur user ka real click
+        // direct system window par chala jaye, tab bhi macro me semantic click save ho.
+        if (type == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+            val service = floating ?: return
+            if (!service.shouldRecordAccessibilitySemanticClick()) return
 
-        val service = floating ?: return
-        if (!service.shouldRecordAccessibilitySemanticClick()) return
+            val pkg = event.packageName?.toString()?.lowercase().orEmpty()
+            if (isAarishSemanticBridgeBlockedPackage(pkg)) return
 
-        val pkg = event.packageName?.toString()?.lowercase().orEmpty()
-        if (isAarishSemanticBridgeBlockedPackage(pkg)) return
-
-        val snapshot = buildAarishSemanticSnapshotFromEvent(event) ?: return
-        service.recordAccessibilitySemanticClickFromSnapshot(snapshot)
+            val snapshot = buildAarishSemanticSnapshotFromEvent(event) ?: return
+            service.recordAccessibilitySemanticClickFromSnapshot(snapshot)
+        }
     }
-
 
 
     override fun onInterrupt() {

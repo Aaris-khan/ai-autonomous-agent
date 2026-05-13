@@ -2228,13 +2228,10 @@ private fun showLoopSettingsDialog() {
         return false
     }
 
-
     private fun restoreLiveReplayGlassSafe(serial: Int) {
         handler.post {
             if (serial != liveReplaySerial) return@post
 
-            val now = android.os.SystemClock.uptimeMillis()
-            semanticClickMuteUntil = now + 900L
             liveReplayActive = false
 
             val glass = captureView ?: return@post
@@ -2248,7 +2245,6 @@ private fun showLoopSettingsDialog() {
             safeUpdateView(glass, params)
         }
     }
-
 
     // AARISH_LIVE_REPLAY_QUEUE_DRAIN_V1
     private fun drainNextLiveReplaySafe() {
@@ -2332,7 +2328,6 @@ private fun showLoopSettingsDialog() {
         }
     }
 
-
     fun triggerLiveReplaySafe(gesture: RecordedGesture) {
         if (instance !== this@FloatingControlService) return
         if (!isRecording || AutoActionService.isPlaying()) return
@@ -2345,19 +2340,6 @@ private fun showLoopSettingsDialog() {
 
         handler.post {
             if (instance !== this@FloatingControlService || !isRecording || AutoActionService.isPlaying()) return@post
-
-            if (liveReplayQueue.size >= 96) {
-                liveReplayQueue.clear()
-                liveReplayQueueDraining = false
-                liveReplayActive = false
-                semanticClickMuteUntil = android.os.SystemClock.uptimeMillis() + 900L
-                Toast.makeText(
-                    this,
-                    "⚠️ Too fast input flood skip hua. Dheere continue karo.",
-                    Toast.LENGTH_SHORT
-                ).show()
-                return@post
-            }
 
             liveReplayQueue.addLast(gesture)
 
@@ -2379,7 +2361,6 @@ private fun showLoopSettingsDialog() {
             }
         }
     }
-
 
     private fun triggerLiveSystemActionSafe(actionType: Int) {
         if (instance !== this@FloatingControlService) return
@@ -2461,60 +2442,33 @@ private fun showLoopSettingsDialog() {
         android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
     }
 
-    // AARISH_SHARE_MENU_LIVE_GUARD_V4_START
-    // V4:
-    // 1) Live replay ke synthetic click ko semantic recorder se mute.
-    // 2) Share/dialog/window change par overlay debounce recover.
-    // 3) Playback ke time panel hidden-state disturb nahi hota.
+    // AARISH_SHARE_MENU_LIVE_GUARD_V3_START
     @Volatile private var semanticAccessibilityBridgeUntil = 0L
-    @Volatile private var semanticClickMuteUntil = 0L
     private var lastSemanticAccessibilityClickAt = 0L
     private var lastSemanticAccessibilityClickKey = ""
-    private var lastOverlayRecoverAt = 0L
-    private var overlayRecoverRunnable: Runnable? = null
-
 
     fun notifyExternalWindowChangedFromAccessibility() {
         handler.post {
             if (instance !== this@FloatingControlService) return@post
             if (!::windowManager.isInitialized) return@post
 
-            val now = android.os.SystemClock.uptimeMillis()
-
-            if (AutoActionService.isPlaying()) {
-                recoverOverlayStackToFrontDebounced(180L)
-                return@post
+            // Android share menu / bottom sheet / system chooser kuch phones par overlay glass ke upar aa jata hai.
+            // Us case me physical user click pass-through ho jata hai, isliye short semantic bridge ON karte hain.
+            if (isRecording && captureView != null) {
+                semanticAccessibilityBridgeUntil = android.os.SystemClock.uptimeMillis() + 12000L
             }
 
-            if (
-                isRecording &&
-                captureView != null &&
-                !liveReplayActive &&
-                now > semanticClickMuteUntil
-            ) {
-                semanticAccessibilityBridgeUntil = kotlin.math.max(
-                    semanticAccessibilityBridgeUntil,
-                    now + 9000L
-                )
-            }
-
-            recoverOverlayStackToFrontDebounced(170L)
+            recoverOverlayStackToFrontNow()
         }
     }
-
-
 
     fun shouldRecordAccessibilitySemanticClick(): Boolean {
         val now = android.os.SystemClock.uptimeMillis()
         return isRecording &&
             captureView != null &&
             now <= semanticAccessibilityBridgeUntil &&
-            now > semanticClickMuteUntil &&
-            !liveReplayActive &&
-            !AutoActionService.isPlaying()
+            !liveReplayActive
     }
-
-
 
     fun recordAccessibilitySemanticClickFromSnapshot(snapshot: TargetSnapshot) {
         handler.post {
@@ -2522,20 +2476,8 @@ private fun showLoopSettingsDialog() {
             if (!shouldRecordAccessibilitySemanticClick()) return@post
 
             val now = android.os.SystemClock.uptimeMillis()
-            if (now <= semanticClickMuteUntil) return@post
-
-            val pkg = snapshot.targetPackage.orEmpty().trim().lowercase()
-            if (
-                pkg.isBlank() ||
-                pkg == packageName.lowercase() ||
-                pkg.contains("inputmethod") ||
-                pkg.contains("keyboard")
-            ) {
-                return@post
-            }
-
             val key = semanticSnapshotKey(snapshot)
-            if (key == lastSemanticAccessibilityClickKey && now - lastSemanticAccessibilityClickAt < 900L) {
+            if (key == lastSemanticAccessibilityClickKey && now - lastSemanticAccessibilityClickAt < 360L) {
                 return@post
             }
 
@@ -2545,18 +2487,17 @@ private fun showLoopSettingsDialog() {
 
             lastSemanticAccessibilityClickAt = now
             lastSemanticAccessibilityClickKey = key
-            semanticAccessibilityBridgeUntil = now + 7500L
+            semanticAccessibilityBridgeUntil = now + 9000L
             pendingDiscardConfirm = false
 
             updateUIState("DONE", true, false, true)
             restorePanelUI()
 
-            if (now - oldAt > 1200L) {
+            if (now - oldAt > 900L) {
                 Toast.makeText(this, "🧩 Share/Dialog click record ho gaya", Toast.LENGTH_SHORT).show()
             }
         }
     }
-
 
     private fun semanticSnapshotKey(snapshot: TargetSnapshot): String {
         return listOf(
@@ -2568,34 +2509,19 @@ private fun showLoopSettingsDialog() {
         ).joinToString("|")
     }
 
-
-    private fun recoverOverlayStackToFrontDebounced(delayMs: Long = 170L) {
-        overlayRecoverRunnable?.let { handler.removeCallbacks(it) }
-
-        val task = Runnable {
-            overlayRecoverRunnable = null
-            recoverOverlayStackToFrontNow()
-        }
-
-        overlayRecoverRunnable = task
-        handler.postDelayed(task, delayMs.coerceIn(40L, 420L))
-    }
-
     private fun recoverOverlayStackToFrontNow() {
         if (instance !== this@FloatingControlService) return
         if (!::windowManager.isInitialized) return
 
-        val now = android.os.SystemClock.uptimeMillis()
-        if (now - lastOverlayRecoverAt < 105L) return
-        lastOverlayRecoverAt = now
-
         val glass = captureView
         val glassParams = glass?.layoutParams as? WindowManager.LayoutParams
 
-        if (isRecording && glass != null && glassParams != null) {
+        // Glass ko pehle re-add karo.
+        if (glass != null && glassParams != null) {
             reAddOverlayViewSilently(glass, glassParams)
         }
 
+        // Panel ko last me re-add karo, warna glass buttons ko cover kar dega.
         val panel = panelView
         val params = panelParams
 
@@ -2605,56 +2531,33 @@ private fun showLoopSettingsDialog() {
         }
 
         if (params != null) {
-            if (AutoActionService.isPlaying()) {
-                hidePanelUIForPlayback()
-            } else {
-                restorePanelUI()
-            }
+            restorePanelUI()
             reAddOverlayViewSilently(panel, params)
         }
     }
 
-
-
     private fun reAddOverlayViewSilently(view: View, params: WindowManager.LayoutParams) {
-        fun removeQuietly() {
-            try {
-                if (view.parent != null) {
-                    try {
-                        windowManager.removeViewImmediate(view)
-                    } catch (_: Exception) {
-                        try { windowManager.removeView(view) } catch (_: Exception) {}
-                    }
+        try {
+            if (view.parent != null) {
+                try {
+                    windowManager.removeViewImmediate(view)
+                } catch (_: Exception) {
+                    try { windowManager.removeView(view) } catch (_: Exception) {}
                 }
-            } catch (_: Exception) {
+            } else {
+                try { windowManager.removeViewImmediate(view) } catch (_: Exception) {}
             }
+        } catch (_: Exception) {
         }
 
-        fun addOrUpdateQuietly(): Boolean {
-            return try {
-                if (view.parent == null) {
-                    windowManager.addView(view, params)
-                } else {
-                    windowManager.updateViewLayout(view, params)
-                }
-                true
-            } catch (_: Exception) {
-                false
-            }
+        try {
+            windowManager.addView(view, params)
+        } catch (_: Exception) {
+            // System windows ke upar Android kabhi-kabhi overlay allow nahi karta.
+            // Us case me Accessibility semantic recorder fallback kaam karega.
         }
-
-        removeQuietly()
-
-        if (addOrUpdateQuietly()) return
-
-        handler.postDelayed({
-            if (instance !== this@FloatingControlService || !::windowManager.isInitialized) return@postDelayed
-            if (view === captureView && !isRecording) return@postDelayed
-            addOrUpdateQuietly()
-        }, 230L)
     }
-
-    // AARISH_SHARE_MENU_LIVE_GUARD_V4_END
+    // AARISH_SHARE_MENU_LIVE_GUARD_V3_END
 
         override fun onDestroy() {
         playbackWatcherRunnable?.let { handler.removeCallbacks(it) }

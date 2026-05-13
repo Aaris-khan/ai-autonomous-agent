@@ -577,19 +577,17 @@ object GestureStore {
 
         return build(start, 0)
     }
-
     fun deleteConfig(context: Context, name: String): Boolean {
         val safeName = normalizeConfigName(name)
         if (safeName == DEFAULT_CONFIG) return false
 
-        val p = prefs(context)
         val oldNames = getAllConfigNames(context).map { normalizeConfigName(it) }.distinct()
         val updatedNames = oldNames
             .filter { it != safeName }
             .distinct()
             .ifEmpty { listOf(DEFAULT_CONFIG) }
 
-        val editor = p.edit()
+        val editor = prefs(context).edit()
             .remove(configKey(safeName))
             .remove(loopModeKeyForName(safeName))
             .remove(loopValueKeyForName(safeName))
@@ -597,20 +595,26 @@ object GestureStore {
             .putString(KEY_ACTIVE_CONFIG, DEFAULT_CONFIG)
             .putString(KEY_CONFIG_LIST, JSONArray(updatedNames).toString())
 
+        // AARISH_MULTI_NEXT_INCOMING_CLEAN_FIX_V1:
+        // Multiple NEXT links A|||B|||C me deleted config ko properly remove karo.
         oldNames.forEach { configName ->
-            val key = nextKeyForName(configName)
-            val raw = p.getString(key, null)
-            if (!raw.isNullOrBlank()) {
-                val original = splitNextConfigRaw(raw)
-                val cleaned = original
-                    .filter { it != safeName && updatedNames.contains(it) }
-                    .distinct()
+            val safeConfigName = normalizeConfigName(configName)
+            if (safeConfigName == safeName) return@forEach
 
-                if (original != cleaned) {
-                    if (cleaned.isEmpty()) {
-                        editor.remove(key)
-                    } else {
-                        editor.putString(key, cleaned.joinToString(NEXT_LIST_SEPARATOR))
+            val key = nextKeyForName(safeConfigName)
+            val rawNext = prefs(context).getString(key, null)
+            if (!rawNext.isNullOrBlank()) {
+                val cleanedNext = splitNextConfigRaw(rawNext)
+                    .filter { next -> next != safeName && next != safeConfigName }
+                    .distinct()
+                    .take(60)
+
+                if (cleanedNext.isEmpty()) {
+                    editor.remove(key)
+                } else {
+                    val cleanedRaw = cleanedNext.joinToString(NEXT_LIST_SEPARATOR)
+                    if (cleanedRaw != rawNext) {
+                        editor.putString(key, cleanedRaw)
                     }
                 }
             }
@@ -618,8 +622,6 @@ object GestureStore {
 
         return editor.commit()
     }
-
-
 
     fun clear(context: Context) {
         val active = getActiveConfigName(context)
@@ -631,25 +633,27 @@ object GestureStore {
             .putString(loopModeKeyForName(active), "ONCE")
             .putInt(loopValueKeyForName(active), 1)
 
-        // Ghost Link Fix V2:
-        // Active config clear hone par kisi bhi NEXT list me active config bachi ho to usko list se remove karo.
+        // Ghost Link Fix:
+        // Agar kisi aur config ka next link is active config par aa raha tha,
+        // to recording clear hone par woh stale incoming link bhi remove karo.
         getAllConfigNames(context).forEach { configName ->
             val safeConfigName = normalizeConfigName(configName)
             if (safeConfigName == active) return@forEach
 
             val key = nextKeyForName(safeConfigName)
-            val raw = p.getString(key, null)
-            if (!raw.isNullOrBlank()) {
-                val original = splitNextConfigRaw(raw)
-                val cleaned = original
-                    .filter { it != active && hasRecordingForConfig(context, it) }
+            val rawNext = p.getString(key, null)
+            if (!rawNext.isNullOrBlank()) {
+                val cleanedNext = splitNextConfigRaw(rawNext)
+                    .filter { next -> next != active && next != safeConfigName }
                     .distinct()
+                    .take(60)
 
-                if (original != cleaned) {
-                    if (cleaned.isEmpty()) {
-                        editor.remove(key)
-                    } else {
-                        editor.putString(key, cleaned.joinToString(NEXT_LIST_SEPARATOR))
+                if (cleanedNext.isEmpty()) {
+                    editor.remove(key)
+                } else {
+                    val cleanedRaw = cleanedNext.joinToString(NEXT_LIST_SEPARATOR)
+                    if (cleanedRaw != rawNext) {
+                        editor.putString(key, cleanedRaw)
                     }
                 }
             }
@@ -661,7 +665,6 @@ object GestureStore {
 
         editor.commit()
     }
-
 
     fun saveLoopSettings(context: Context, mode: String, value: Int) {
         saveLoopSettingsForConfig(context, getActiveConfigName(context), mode, value)

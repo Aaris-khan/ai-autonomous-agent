@@ -34,18 +34,19 @@ class FloatingControlService : Service() {
 
     fun isRecordingActive(): Boolean = isRecording
 
-
     fun pokePanelToFront() {
         handler.post {
             if (instance !== this@FloatingControlService) return@post
             if (!::windowManager.isInitialized) return@post
 
-            // Share menu / dialog / chooser window ke baad:
-            // Glass first, panel last. Isse DONE/SAVE/CUT buttons glass ke neeche lock nahi honge.
-            recoverOverlayStackToFrontNow()
+            if (panelView == null) {
+                showFloatingPanel()
+            } else {
+                restorePanelUI()
+                bringPanelToFront()
+            }
         }
     }
-
 
     private lateinit var windowManager: WindowManager
     private var panelView: View? = null
@@ -82,12 +83,6 @@ class FloatingControlService : Service() {
     private var lastLiveReplayAt = 0L
     private var lastLiveReplayX = Float.NaN
     private var lastLiveReplayY = Float.NaN
-
-    // AARISH_LIVE_REPLAY_QUEUE_FIX_V1:
-    // Fast double-tap miss fix. Short taps wait briefly before pass-through replay,
-    // so second tap can still be captured by the glass, then gestures replay in order.
-    private val liveReplayQueue = java.util.ArrayDeque<RecordedGesture>()
-    private var liveReplayQueueDraining = false
     // AARISH_ULTRA_TOUCH_SYSTEM_V2_END
 
             override fun onCreate() {
@@ -2081,11 +2076,6 @@ private fun showLoopSettingsDialog() {
         nextNavigationGapOverride = null
         unsavedGestures = emptyList()
         isRecording = false
-        // AARISH_LIVE_REPLAY_QUEUE_CLEAR_V1
-        liveReplayQueue.clear()
-        liveReplayQueueDraining = false
-        liveReplayActive = false
-        liveReplaySerial++
         playbackWatcherRunnable?.let { handler.removeCallbacks(it) }
         playbackWatcherRunnable = null
         safeRemoveView(captureView)
@@ -2228,13 +2218,10 @@ private fun showLoopSettingsDialog() {
         return false
     }
 
-
     private fun restoreLiveReplayGlassSafe(serial: Int) {
         handler.post {
             if (serial != liveReplaySerial) return@post
 
-            val now = android.os.SystemClock.uptimeMillis()
-            semanticClickMuteUntil = now + 900L
             liveReplayActive = false
 
             val glass = captureView ?: return@post
@@ -2249,90 +2236,6 @@ private fun showLoopSettingsDialog() {
         }
     }
 
-
-    // AARISH_LIVE_REPLAY_QUEUE_DRAIN_V1
-    private fun drainNextLiveReplaySafe() {
-        handler.post {
-            if (instance !== this@FloatingControlService || !isRecording || AutoActionService.isPlaying()) {
-                liveReplayQueue.clear()
-                liveReplayQueueDraining = false
-                liveReplayActive = false
-                return@post
-            }
-
-            val gesture = liveReplayQueue.pollFirst()
-            if (gesture == null) {
-                liveReplayQueueDraining = false
-                liveReplayActive = false
-                return@post
-            }
-
-            val glass = captureView
-            val params = glass?.layoutParams as? WindowManager.LayoutParams
-            if (glass == null || params == null) {
-                liveReplayQueue.clear()
-                liveReplayQueueDraining = false
-                liveReplayActive = false
-                return@post
-            }
-
-            val serial = liveReplaySerial + 1
-            liveReplaySerial = serial
-            liveReplayActive = true
-
-            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-            glass.setBackgroundColor(Color.TRANSPARENT)
-            glass.alpha = 1f
-            safeUpdateView(glass, params)
-
-            val duration = liveReplayDurationMs(gesture)
-            val watchdogMs = (duration + 4200L).coerceAtMost(610000L)
-            var finished = false
-
-            fun finishAndContinueQueue() {
-                if (finished) return
-                finished = true
-
-                restoreLiveReplayGlassSafe(serial)
-
-                handler.postDelayed({
-                    if (instance !== this@FloatingControlService || !isRecording || AutoActionService.isPlaying()) {
-                        liveReplayQueue.clear()
-                        liveReplayQueueDraining = false
-                        liveReplayActive = false
-                        return@postDelayed
-                    }
-
-                    if (liveReplayQueue.isNotEmpty()) {
-                        drainNextLiveReplaySafe()
-                    } else {
-                        liveReplayQueueDraining = false
-                    }
-                }, 92L)
-            }
-
-            handler.postDelayed({
-                if (serial != liveReplaySerial || instance !== this@FloatingControlService || !isRecording || captureView !== glass) {
-                    finishAndContinueQueue()
-                    return@postDelayed
-                }
-
-                AutoActionService.playSingleLiveGestureSafe(gesture) {
-                    handler.postDelayed({
-                        finishAndContinueQueue()
-                    }, 70L)
-                }
-            }, 42L)
-
-            handler.postDelayed({
-                if (serial == liveReplaySerial && liveReplayActive) {
-                    finishAndContinueQueue()
-                }
-            }, watchdogMs)
-        }
-    }
-
-
     fun triggerLiveReplaySafe(gesture: RecordedGesture) {
         if (instance !== this@FloatingControlService) return
         if (!isRecording || AutoActionService.isPlaying()) return
@@ -2343,43 +2246,40 @@ private fun showLoopSettingsDialog() {
 
         if (isLiveReplayBlockedDuplicate(gesture)) return
 
-        handler.post {
-            if (instance !== this@FloatingControlService || !isRecording || AutoActionService.isPlaying()) return@post
+        val glass = captureView ?: return
+        val params = glass.layoutParams as? WindowManager.LayoutParams ?: return
 
-            if (liveReplayQueue.size >= 96) {
-                liveReplayQueue.clear()
-                liveReplayQueueDraining = false
-                liveReplayActive = false
-                semanticClickMuteUntil = android.os.SystemClock.uptimeMillis() + 900L
-                Toast.makeText(
-                    this,
-                    "⚠️ Too fast input flood skip hua. Dheere continue karo.",
-                    Toast.LENGTH_SHORT
-                ).show()
-                return@post
+        val serial = liveReplaySerial + 1
+        liveReplaySerial = serial
+        liveReplayActive = true
+
+        params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        glass.setBackgroundColor(Color.TRANSPARENT)
+        glass.alpha = 1f
+        safeUpdateView(glass, params)
+
+        val duration = liveReplayDurationMs(gesture)
+        val watchdogMs = (duration + 4200L).coerceAtMost(610000L)
+
+        handler.postDelayed({
+            if (serial != liveReplaySerial || instance !== this@FloatingControlService || !isRecording || captureView !== glass) {
+                restoreLiveReplayGlassSafe(serial)
+                return@postDelayed
             }
 
-            liveReplayQueue.addLast(gesture)
-
-            if (!liveReplayQueueDraining) {
-                liveReplayQueueDraining = true
-
-                val firstDelay = if (
-                    !localGestureHasRealMovement(gesture) &&
-                    liveReplayDurationMs(gesture) <= 240L
-                ) {
-                    165L
-                } else {
-                    42L
-                }
-
+            AutoActionService.playSingleLiveGestureSafe(gesture) {
                 handler.postDelayed({
-                    drainNextLiveReplaySafe()
-                }, firstDelay)
+                    restoreLiveReplayGlassSafe(serial)
+                }, 70L)
             }
-        }
-    }
+        }, 42L)
 
+        handler.postDelayed({
+            if (serial == liveReplaySerial && liveReplayActive) {
+                restoreLiveReplayGlassSafe(serial)
+            }
+        }, watchdogMs)
+    }
 
     private fun triggerLiveSystemActionSafe(actionType: Int) {
         if (instance !== this@FloatingControlService) return
@@ -2460,202 +2360,6 @@ private fun showLoopSettingsDialog() {
         triggerLiveSystemActionSafe(actionType)
         android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
     }
-
-    // AARISH_SHARE_MENU_LIVE_GUARD_V4_START
-    // V4:
-    // 1) Live replay ke synthetic click ko semantic recorder se mute.
-    // 2) Share/dialog/window change par overlay debounce recover.
-    // 3) Playback ke time panel hidden-state disturb nahi hota.
-    @Volatile private var semanticAccessibilityBridgeUntil = 0L
-    @Volatile private var semanticClickMuteUntil = 0L
-    private var lastSemanticAccessibilityClickAt = 0L
-    private var lastSemanticAccessibilityClickKey = ""
-    private var lastOverlayRecoverAt = 0L
-    private var overlayRecoverRunnable: Runnable? = null
-
-
-    fun notifyExternalWindowChangedFromAccessibility() {
-        handler.post {
-            if (instance !== this@FloatingControlService) return@post
-            if (!::windowManager.isInitialized) return@post
-
-            val now = android.os.SystemClock.uptimeMillis()
-
-            if (AutoActionService.isPlaying()) {
-                recoverOverlayStackToFrontDebounced(180L)
-                return@post
-            }
-
-            if (
-                isRecording &&
-                captureView != null &&
-                !liveReplayActive &&
-                now > semanticClickMuteUntil
-            ) {
-                semanticAccessibilityBridgeUntil = kotlin.math.max(
-                    semanticAccessibilityBridgeUntil,
-                    now + 9000L
-                )
-            }
-
-            recoverOverlayStackToFrontDebounced(170L)
-        }
-    }
-
-
-
-    fun shouldRecordAccessibilitySemanticClick(): Boolean {
-        val now = android.os.SystemClock.uptimeMillis()
-        return isRecording &&
-            captureView != null &&
-            now <= semanticAccessibilityBridgeUntil &&
-            now > semanticClickMuteUntil &&
-            !liveReplayActive &&
-            !AutoActionService.isPlaying()
-    }
-
-
-
-    fun recordAccessibilitySemanticClickFromSnapshot(snapshot: TargetSnapshot) {
-        handler.post {
-            if (instance !== this@FloatingControlService) return@post
-            if (!shouldRecordAccessibilitySemanticClick()) return@post
-
-            val now = android.os.SystemClock.uptimeMillis()
-            if (now <= semanticClickMuteUntil) return@post
-
-            val pkg = snapshot.targetPackage.orEmpty().trim().lowercase()
-            if (
-                pkg.isBlank() ||
-                pkg == packageName.lowercase() ||
-                pkg.contains("inputmethod") ||
-                pkg.contains("keyboard")
-            ) {
-                return@post
-            }
-
-            val key = semanticSnapshotKey(snapshot)
-            if (key == lastSemanticAccessibilityClickKey && now - lastSemanticAccessibilityClickAt < 900L) {
-                return@post
-            }
-
-            val oldAt = lastSemanticAccessibilityClickAt
-            val added = captureView?.addAccessibilitySnapshotGesture(snapshot) == true
-            if (!added) return@post
-
-            lastSemanticAccessibilityClickAt = now
-            lastSemanticAccessibilityClickKey = key
-            semanticAccessibilityBridgeUntil = now + 7500L
-            pendingDiscardConfirm = false
-
-            updateUIState("DONE", true, false, true)
-            restorePanelUI()
-
-            if (now - oldAt > 1200L) {
-                Toast.makeText(this, "🧩 Share/Dialog click record ho gaya", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-
-    private fun semanticSnapshotKey(snapshot: TargetSnapshot): String {
-        return listOf(
-            snapshot.targetPackage.orEmpty(),
-            snapshot.targetId.orEmpty(),
-            snapshot.targetText.orEmpty(),
-            snapshot.targetDesc.orEmpty(),
-            "${snapshot.targetLeft},${snapshot.targetTop},${snapshot.targetRight},${snapshot.targetBottom}"
-        ).joinToString("|")
-    }
-
-
-    private fun recoverOverlayStackToFrontDebounced(delayMs: Long = 170L) {
-        overlayRecoverRunnable?.let { handler.removeCallbacks(it) }
-
-        val task = Runnable {
-            overlayRecoverRunnable = null
-            recoverOverlayStackToFrontNow()
-        }
-
-        overlayRecoverRunnable = task
-        handler.postDelayed(task, delayMs.coerceIn(40L, 420L))
-    }
-
-    private fun recoverOverlayStackToFrontNow() {
-        if (instance !== this@FloatingControlService) return
-        if (!::windowManager.isInitialized) return
-
-        val now = android.os.SystemClock.uptimeMillis()
-        if (now - lastOverlayRecoverAt < 105L) return
-        lastOverlayRecoverAt = now
-
-        val glass = captureView
-        val glassParams = glass?.layoutParams as? WindowManager.LayoutParams
-
-        if (isRecording && glass != null && glassParams != null) {
-            reAddOverlayViewSilently(glass, glassParams)
-        }
-
-        val panel = panelView
-        val params = panelParams
-
-        if (panel == null) {
-            showFloatingPanel()
-            return
-        }
-
-        if (params != null) {
-            if (AutoActionService.isPlaying()) {
-                hidePanelUIForPlayback()
-            } else {
-                restorePanelUI()
-            }
-            reAddOverlayViewSilently(panel, params)
-        }
-    }
-
-
-
-    private fun reAddOverlayViewSilently(view: View, params: WindowManager.LayoutParams) {
-        fun removeQuietly() {
-            try {
-                if (view.parent != null) {
-                    try {
-                        windowManager.removeViewImmediate(view)
-                    } catch (_: Exception) {
-                        try { windowManager.removeView(view) } catch (_: Exception) {}
-                    }
-                }
-            } catch (_: Exception) {
-            }
-        }
-
-        fun addOrUpdateQuietly(): Boolean {
-            return try {
-                if (view.parent == null) {
-                    windowManager.addView(view, params)
-                } else {
-                    windowManager.updateViewLayout(view, params)
-                }
-                true
-            } catch (_: Exception) {
-                false
-            }
-        }
-
-        removeQuietly()
-
-        if (addOrUpdateQuietly()) return
-
-        handler.postDelayed({
-            if (instance !== this@FloatingControlService || !::windowManager.isInitialized) return@postDelayed
-            if (view === captureView && !isRecording) return@postDelayed
-            addOrUpdateQuietly()
-        }, 230L)
-    }
-
-    // AARISH_SHARE_MENU_LIVE_GUARD_V4_END
-
         override fun onDestroy() {
         playbackWatcherRunnable?.let { handler.removeCallbacks(it) }
         playbackWatcherRunnable = null
@@ -2664,9 +2368,6 @@ private fun showLoopSettingsDialog() {
         isRecording = false
         liveReplayActive = false
         liveReplaySerial++
-        // AARISH_LIVE_REPLAY_QUEUE_DESTROY_CLEAR_V1
-        liveReplayQueue.clear()
-        liveReplayQueueDraining = false
         pendingDiscardConfirm = false
         glassHiddenAt = 0L
         nextNavigationGapOverride = null
@@ -2829,7 +2530,6 @@ private fun extractAndAppendGestures() {
         startRecording()
     }
 
-
 private fun startRecording() {
     try { closeSettingsPanel() } catch (_: Exception) {}
 
@@ -2851,10 +2551,7 @@ private fun startRecording() {
         WindowManager.LayoutParams.MATCH_PARENT,
         WindowManager.LayoutParams.MATCH_PARENT,
         overlayType,
-        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-            WindowManager.LayoutParams.FLAG_SPLIT_TOUCH,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
         PixelFormat.TRANSLUCENT
     )
     params.gravity = Gravity.TOP or Gravity.START
@@ -2877,13 +2574,8 @@ private fun startRecording() {
     isRecording = true
     updateUIState("DONE", true, false, true)
     bringPanelToFront()
-    Toast.makeText(
-        this,
-        "🟢 LIVE Glass ON! Tap/swipe/double-tap/long-press record + live fire. Share/Dialog fallback bhi ON hai.",
-        Toast.LENGTH_SHORT
-    ).show()
+    Toast.makeText(this, "🟢 LIVE Glass ON! Tap/swipe/double-tap/long-press record bhi hoga aur real app par chalega bhi.", Toast.LENGTH_SHORT).show()
 }
-
 
 
     private fun undoLastStep() {
@@ -3325,105 +3017,6 @@ fun addSystemGesture(actionType: Int) {
         )
     )
 }
-
-
-// AARISH_TOUCH_CAPTURE_SEMANTIC_BRIDGE_V3_START
-fun addAccessibilitySnapshotGesture(snapshot: TargetSnapshot): Boolean {
-    currentPoints.clear()
-    currentSnapshot = null
-    currentGestureDownTime = 0L
-    multiTouchCanceled = false
-
-    fun safePercent(value: Float, fallback: Float): Float {
-        return if (value.isNaN() || value.isInfinite()) fallback else value.coerceIn(0f, 1f)
-    }
-
-    val metrics = resources.displayMetrics
-    val screenW = metrics.widthPixels.toFloat().coerceAtLeast(1f)
-    val screenH = metrics.heightPixels.toFloat().coerceAtLeast(1f)
-
-    val hasBounds = snapshot.targetRight > snapshot.targetLeft &&
-        snapshot.targetBottom > snapshot.targetTop
-
-    val rawX = if (hasBounds) {
-        snapshot.targetLeft.toFloat() +
-            (safePercent(snapshot.insideXPercent, 0.5f) * (snapshot.targetRight - snapshot.targetLeft).toFloat())
-    } else {
-        safePercent(snapshot.xPercent, 0.5f) * screenW
-    }
-
-    val rawY = if (hasBounds) {
-        snapshot.targetTop.toFloat() +
-            (safePercent(snapshot.insideYPercent, 0.5f) * (snapshot.targetBottom - snapshot.targetTop).toFloat())
-    } else {
-        safePercent(snapshot.yPercent, 0.5f) * screenH
-    }
-
-    val x = rawX.coerceIn(2f, (screenW - 2f).coerceAtLeast(2f))
-    val y = rawY.coerceIn(2f, (screenH - 2f).coerceAtLeast(2f))
-
-    val now = android.os.SystemClock.uptimeMillis()
-    val rawDelay = (now - recordingStartTime).coerceAtLeast(0L)
-    val previousEnd = recordedGestures.maxOfOrNull { gesture ->
-        gesture.delayFromStart.coerceAtLeast(0L) +
-            (gesture.points.maxOfOrNull { it.t.coerceAtLeast(0L) } ?: 0L)
-    } ?: 0L
-
-    val delay = kotlin.math.max(rawDelay, previousEnd + 90L)
-        .coerceAtMost(24L * 60L * 60L * 1000L)
-
-    val last = recordedGestures.lastOrNull()
-    if (last != null && delay - previousEnd <= 280L) {
-        val lastPoint = last.points.firstOrNull()
-        val near = lastPoint != null &&
-            kotlin.math.abs(lastPoint.x - x) < 22f &&
-            kotlin.math.abs(lastPoint.y - y) < 22f
-
-        val samePrimary =
-            (!snapshot.targetId.isNullOrBlank() && snapshot.targetId == last.targetId) ||
-                (!snapshot.targetText.isNullOrBlank() && snapshot.targetText == last.targetText) ||
-                (!snapshot.targetDesc.isNullOrBlank() && snapshot.targetDesc == last.targetDesc)
-
-        if (near || samePrimary) return false
-    }
-
-    val points = listOf(
-        GesturePoint(x = x, y = y, t = 0L),
-        GesturePoint(x = x, y = y, t = 90L)
-    )
-
-    recordedGestures.add(
-        RecordedGesture(
-            delayFromStart = delay,
-            points = points,
-            targetText = snapshot.targetText,
-            targetDesc = snapshot.targetDesc,
-            targetId = snapshot.targetId,
-            targetClass = snapshot.targetClass,
-            targetPackage = snapshot.targetPackage,
-            targetContextText = snapshot.targetContextText,
-            targetChildText = snapshot.targetChildText,
-            targetSiblingText = snapshot.targetSiblingText,
-            targetRoleFlags = snapshot.targetRoleFlags,
-            targetTreePath = snapshot.targetTreePath,
-            targetLeft = snapshot.targetLeft,
-            targetTop = snapshot.targetTop,
-            targetRight = snapshot.targetRight,
-            targetBottom = snapshot.targetBottom,
-            xPercent = safePercent(snapshot.xPercent, x / screenW),
-            yPercent = safePercent(snapshot.yPercent, y / screenH),
-            targetWPercent = safePercent(snapshot.targetWPercent, 0f),
-            targetHPercent = safePercent(snapshot.targetHPercent, 0f),
-            insideXPercent = safePercent(snapshot.insideXPercent, 0.5f),
-            insideYPercent = safePercent(snapshot.insideYPercent, 0.5f),
-            recordedScreenW = snapshot.recordedScreenW.takeIf { it > 0 } ?: metrics.widthPixels,
-            recordedScreenH = snapshot.recordedScreenH.takeIf { it > 0 } ?: metrics.heightPixels
-        )
-    )
-
-    return true
-}
-// AARISH_TOUCH_CAPTURE_SEMANTIC_BRIDGE_V3_END
 
     fun hasRecordedSomething(): Boolean {
         return currentPoints.isNotEmpty() || recordedGestures.isNotEmpty()

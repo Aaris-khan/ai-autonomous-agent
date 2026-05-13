@@ -577,19 +577,17 @@ object GestureStore {
 
         return build(start, 0)
     }
-
     fun deleteConfig(context: Context, name: String): Boolean {
         val safeName = normalizeConfigName(name)
         if (safeName == DEFAULT_CONFIG) return false
 
-        val p = prefs(context)
         val oldNames = getAllConfigNames(context).map { normalizeConfigName(it) }.distinct()
         val updatedNames = oldNames
             .filter { it != safeName }
             .distinct()
             .ifEmpty { listOf(DEFAULT_CONFIG) }
 
-        val editor = p.edit()
+        val editor = prefs(context).edit()
             .remove(configKey(safeName))
             .remove(loopModeKeyForName(safeName))
             .remove(loopValueKeyForName(safeName))
@@ -599,27 +597,14 @@ object GestureStore {
 
         oldNames.forEach { configName ->
             val key = nextKeyForName(configName)
-            val raw = p.getString(key, null)
-            if (!raw.isNullOrBlank()) {
-                val original = splitNextConfigRaw(raw)
-                val cleaned = original
-                    .filter { it != safeName && updatedNames.contains(it) }
-                    .distinct()
-
-                if (original != cleaned) {
-                    if (cleaned.isEmpty()) {
-                        editor.remove(key)
-                    } else {
-                        editor.putString(key, cleaned.joinToString(NEXT_LIST_SEPARATOR))
-                    }
-                }
+            val next = prefs(context).getString(key, null)
+            if (!next.isNullOrBlank() && normalizeConfigName(next) == safeName) {
+                editor.remove(key)
             }
         }
 
         return editor.commit()
     }
-
-
 
     fun clear(context: Context) {
         val active = getActiveConfigName(context)
@@ -631,27 +616,14 @@ object GestureStore {
             .putString(loopModeKeyForName(active), "ONCE")
             .putInt(loopValueKeyForName(active), 1)
 
-        // Ghost Link Fix V2:
-        // Active config clear hone par kisi bhi NEXT list me active config bachi ho to usko list se remove karo.
+        // Ghost Link Fix:
+        // Agar kisi aur config ka next link is active config par aa raha tha,
+        // to recording clear hone par woh stale incoming link bhi remove karo.
         getAllConfigNames(context).forEach { configName ->
-            val safeConfigName = normalizeConfigName(configName)
-            if (safeConfigName == active) return@forEach
-
-            val key = nextKeyForName(safeConfigName)
-            val raw = p.getString(key, null)
-            if (!raw.isNullOrBlank()) {
-                val original = splitNextConfigRaw(raw)
-                val cleaned = original
-                    .filter { it != active && hasRecordingForConfig(context, it) }
-                    .distinct()
-
-                if (original != cleaned) {
-                    if (cleaned.isEmpty()) {
-                        editor.remove(key)
-                    } else {
-                        editor.putString(key, cleaned.joinToString(NEXT_LIST_SEPARATOR))
-                    }
-                }
+            val key = nextKeyForName(configName)
+            val next = p.getString(key, null)
+            if (!next.isNullOrBlank() && normalizeConfigName(next) == active) {
+                editor.remove(key)
             }
         }
 
@@ -661,7 +633,6 @@ object GestureStore {
 
         editor.commit()
     }
-
 
     fun saveLoopSettings(context: Context, mode: String, value: Int) {
         saveLoopSettingsForConfig(context, getActiveConfigName(context), mode, value)
