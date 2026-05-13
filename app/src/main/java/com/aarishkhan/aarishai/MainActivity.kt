@@ -80,10 +80,8 @@ class MainActivity : Activity() {
             return
         }
 
-        if ((!hasOverlayPermission() || !isAccessibilityServiceEnabled()) && !autoPermissionPromptDone) {
-            autoPermissionPromptDone = true
-            startScreenCommandSystem(forceOpenSettings = true)
-        }
+        // Restore/Export screen ko disturb mat karo.
+        // Permission flow sirf SCREEN COMMAND button dabane par open hoga.
     }
 
     private fun exportBackupWithPicker() {
