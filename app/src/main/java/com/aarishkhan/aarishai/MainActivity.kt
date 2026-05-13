@@ -2,6 +2,7 @@ package com.aarishkhan.aarishai
 
 import android.app.Activity
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -11,9 +12,14 @@ import android.provider.Settings
 import android.text.TextUtils
 import android.widget.Button
 import android.widget.Toast
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainActivity : Activity() {
     private lateinit var btnScreenCommand: Button
+    private lateinit var btnExportData: Button
+    private lateinit var btnRestoreData: Button
+
     private var isWaitingForPermission = false
     private var lastPermissionLaunchAt = 0L
     private var notificationPermissionAskedThisSession = false
@@ -32,10 +38,21 @@ class MainActivity : Activity() {
         setContentView(R.layout.activity_main)
 
         btnScreenCommand = findViewById(R.id.btnScreenCommand)
+        btnExportData = findViewById(R.id.btnExportData)
+        btnRestoreData = findViewById(R.id.btnRestoreData)
+
         btnScreenCommand.setOnClickListener {
             lastPermissionScreen = null
             autoPermissionPromptDone = false
             startScreenCommandSystem(forceOpenSettings = true)
+        }
+
+        btnExportData.setOnClickListener {
+            exportBackupWithPicker()
+        }
+
+        btnRestoreData.setOnClickListener {
+            restoreBackupWithPicker()
         }
     }
 
@@ -59,17 +76,174 @@ class MainActivity : Activity() {
                 return
             }
 
-            Toast.makeText(
-                this,
-                "Permission enable karke SCREEN COMMAND dobara dabao",
-                Toast.LENGTH_SHORT
-            ).show()
+            Toast.makeText(this, "Permission enable karke SCREEN COMMAND dobara dabao", Toast.LENGTH_SHORT).show()
             return
         }
 
         if ((!hasOverlayPermission() || !isAccessibilityServiceEnabled()) && !autoPermissionPromptDone) {
             autoPermissionPromptDone = true
             startScreenCommandSystem(forceOpenSettings = true)
+        }
+    }
+
+    private fun exportBackupWithPicker() {
+        try {
+            val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "application/json"
+                putExtra(Intent.EXTRA_TITLE, "AarishAI_Backup.json")
+            }
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, REQUEST_EXPORT_BACKUP)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Export picker open nahi hua: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun restoreBackupWithPicker() {
+        try {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "application/json"
+            }
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, REQUEST_IMPORT_BACKUP)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Restore picker open nahi hua: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    @Deprecated("Using Activity result for compatibility with simple Activity")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+
+        if (resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+
+        when (requestCode) {
+            REQUEST_EXPORT_BACKUP -> writeBackupToUri(uri)
+            REQUEST_IMPORT_BACKUP -> readBackupFromUri(uri)
+        }
+    }
+
+    private fun writeBackupToUri(uri: Uri) {
+        try {
+            val backup = buildBackupJson().toString(2)
+            contentResolver.openOutputStream(uri)?.use { stream ->
+                stream.write(backup.toByteArray(Charsets.UTF_8))
+                stream.flush()
+            } ?: error("Output stream null")
+
+            Toast.makeText(this, "✅ Backup save ho gaya", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Backup fail: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun readBackupFromUri(uri: Uri) {
+        try {
+            val jsonText = contentResolver.openInputStream(uri)?.use { stream ->
+                stream.readBytes().toString(Charsets.UTF_8)
+            } ?: error("Input stream null")
+
+            restoreBackupJson(JSONObject(jsonText))
+            Toast.makeText(this, "✅ Restore complete! App restart karo.", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Restore fail: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun buildBackupJson(): JSONObject {
+        val prefs = getSharedPreferences(PREF_SCREEN_COMMAND_STORE, Context.MODE_PRIVATE)
+        val root = JSONObject()
+        val data = JSONObject()
+
+        root.put("format", "AarishAI_Backup_v2")
+        root.put("exportedAt", System.currentTimeMillis())
+        root.put("packageName", packageName)
+
+        for ((key, value) in prefs.all) {
+            val item = JSONObject()
+            when (value) {
+                is String -> {
+                    item.put("type", "String")
+                    item.put("value", value)
+                }
+                is Int -> {
+                    item.put("type", "Int")
+                    item.put("value", value)
+                }
+                is Long -> {
+                    item.put("type", "Long")
+                    item.put("value", value)
+                }
+                is Float -> {
+                    item.put("type", "Float")
+                    item.put("value", value.toDouble())
+                }
+                is Boolean -> {
+                    item.put("type", "Boolean")
+                    item.put("value", value)
+                }
+                is Set<*> -> {
+                    item.put("type", "StringSet")
+                    val arr = JSONArray()
+                    value.filterIsInstance<String>().forEach { arr.put(it) }
+                    item.put("value", arr)
+                }
+                else -> continue
+            }
+            data.put(key, item)
+        }
+
+        root.put("prefs", data)
+        return root
+    }
+
+    private fun restoreBackupJson(root: JSONObject) {
+        val editor = getSharedPreferences(PREF_SCREEN_COMMAND_STORE, Context.MODE_PRIVATE).edit()
+        editor.clear()
+
+        val typedPrefs = root.optJSONObject("prefs")
+        if (typedPrefs != null) {
+            val keys = typedPrefs.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val item = typedPrefs.optJSONObject(key) ?: continue
+                when (item.optString("type")) {
+                    "String" -> editor.putString(key, item.optString("value", ""))
+                    "Int" -> editor.putInt(key, item.optInt("value", 0))
+                    "Long" -> editor.putLong(key, item.optLong("value", 0L))
+                    "Float" -> editor.putFloat(key, item.optDouble("value", 0.0).toFloat())
+                    "Boolean" -> editor.putBoolean(key, item.optBoolean("value", false))
+                    "StringSet" -> {
+                        val arr = item.optJSONArray("value") ?: JSONArray()
+                        val set = linkedSetOf<String>()
+                        for (i in 0 until arr.length()) {
+                            set.add(arr.optString(i, ""))
+                        }
+                        editor.putStringSet(key, set.filter { it.isNotBlank() }.toSet())
+                    }
+                }
+            }
+        } else {
+            val keys = root.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                if (key in setOf("format", "exportedAt", "packageName")) continue
+
+                when (val value = root.get(key)) {
+                    is String -> editor.putString(key, value)
+                    is Int -> editor.putInt(key, value)
+                    is Long -> editor.putLong(key, value)
+                    is Double -> editor.putFloat(key, value.toFloat())
+                    is Boolean -> editor.putBoolean(key, value)
+                }
+            }
+        }
+
+        if (!editor.commit()) {
+            error("SharedPreferences commit fail")
         }
     }
 
@@ -125,12 +299,7 @@ class MainActivity : Activity() {
         isWaitingForPermission = true
         lastPermissionScreen = PERMISSION_SCREEN_OVERLAY
         try {
-            startActivity(
-                Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:$packageName")
-                )
-            )
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
         } catch (e: Exception) {
             isWaitingForPermission = false
             lastPermissionScreen = null
@@ -170,11 +339,7 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_NOTIFICATION_PERMISSION) {
             if (grantResults.isEmpty() || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(
-                    this,
-                    "Notification permission deny hai. Service phir bhi start ho sakti hai.",
-                    Toast.LENGTH_LONG
-                ).show()
+                Toast.makeText(this, "Notification permission deny hai. Service phir bhi start ho sakti hai.", Toast.LENGTH_LONG).show()
             }
             startScreenCommandSystem(forceOpenSettings = false)
         }
@@ -223,10 +388,16 @@ class MainActivity : Activity() {
     }
 
     companion object {
+        private const val PREF_SCREEN_COMMAND_STORE = "screen_command_store"
+
         private const val REQUEST_NOTIFICATION_PERMISSION = 5001
+        private const val REQUEST_EXPORT_BACKUP = 7001
+        private const val REQUEST_IMPORT_BACKUP = 7002
+
         private const val POST_NOTIFICATIONS_PERMISSION = "android.permission.POST_NOTIFICATIONS"
         private const val PERMISSION_SCREEN_OVERLAY = "overlay"
         private const val PERMISSION_SCREEN_ACCESSIBILITY = "accessibility"
+
         private const val KEY_WAITING_PERMISSION = "waiting_permission"
         private const val KEY_LAST_PERMISSION_LAUNCH_AT = "last_permission_launch_at"
         private const val KEY_NOTIFICATION_ASKED = "notification_asked"
