@@ -198,44 +198,108 @@ class MainActivity : Activity() {
         return root
     }
 
-    private fun restoreBackupJson(root: JSONObject) {
-        val editor = getSharedPreferences(PREF_SCREEN_COMMAND_STORE, Context.MODE_PRIVATE).edit()
-        editor.clear()
+    
 
+
+    private fun isAarishBackupKey(key: String): Boolean {
+        return key == "recorded_gestures" ||
+            key == "active_config" ||
+            key == "config_list_json" ||
+            key == "tap_accuracy_mode" ||
+            key.startsWith("config_") ||
+            key.startsWith("next_config_") ||
+            key.startsWith("loop_mode") ||
+            key.startsWith("loop_value")
+    }
+
+    private fun restoreBackupJson(root: JSONObject) {
         val typedPrefs = root.optJSONObject("prefs")
+        val restoreItems = mutableListOf<Triple<String, String, Any?>>()
+
         if (typedPrefs != null) {
+            val format = root.optString("format", "")
+
+            if (format.isNotBlank() && !format.startsWith("AarishAI_Backup_")) {
+                error("Ye AarishAI backup file nahi lag rahi")
+            }
+
             val keys = typedPrefs.keys()
             while (keys.hasNext()) {
                 val key = keys.next()
+
+                // Wrong/random JSON se app data destroy na ho.
+                if (!isAarishBackupKey(key)) continue
+
                 val item = typedPrefs.optJSONObject(key) ?: continue
-                when (item.optString("type")) {
-                    "String" -> editor.putString(key, item.optString("value", ""))
-                    "Int" -> editor.putInt(key, item.optInt("value", 0))
-                    "Long" -> editor.putLong(key, item.optLong("value", 0L))
-                    "Float" -> editor.putFloat(key, item.optDouble("value", 0.0).toFloat())
-                    "Boolean" -> editor.putBoolean(key, item.optBoolean("value", false))
+                when (val type = item.optString("type")) {
+                    "String" -> restoreItems.add(Triple(key, type, item.optString("value", "")))
+                    "Int" -> restoreItems.add(Triple(key, type, item.optInt("value", 0)))
+                    "Long" -> restoreItems.add(Triple(key, type, item.optLong("value", 0L)))
+                    "Float" -> restoreItems.add(Triple(key, type, item.optDouble("value", 0.0).toFloat()))
+                    "Boolean" -> restoreItems.add(Triple(key, type, item.optBoolean("value", false)))
                     "StringSet" -> {
                         val arr = item.optJSONArray("value") ?: JSONArray()
                         val set = linkedSetOf<String>()
                         for (i in 0 until arr.length()) {
-                            set.add(arr.optString(i, ""))
+                            val value = arr.optString(i, "").trim()
+                            if (value.isNotBlank()) set.add(value)
                         }
-                        editor.putStringSet(key, set.filter { it.isNotBlank() }.toSet())
+                        restoreItems.add(Triple(key, type, set.toSet()))
                     }
                 }
             }
         } else {
+            // Legacy old backup support.
             val keys = root.keys()
             while (keys.hasNext()) {
                 val key = keys.next()
-                if (key in setOf("format", "exportedAt", "packageName")) continue
 
-                when (val value = root.get(key)) {
-                    is String -> editor.putString(key, value)
-                    is Int -> editor.putInt(key, value)
-                    is Long -> editor.putLong(key, value)
-                    is Double -> editor.putFloat(key, value.toFloat())
-                    is Boolean -> editor.putBoolean(key, value)
+                if (key in setOf("format", "exportedAt", "packageName")) continue
+                if (!isAarishBackupKey(key)) continue
+
+                when (val value = root.opt(key)) {
+                    is String -> restoreItems.add(Triple(key, "String", value))
+                    is Int -> restoreItems.add(Triple(key, "Int", value))
+                    is Long -> restoreItems.add(Triple(key, "Long", value))
+                    is Double -> restoreItems.add(Triple(key, "Float", value.toFloat()))
+                    is Boolean -> restoreItems.add(Triple(key, "Boolean", value))
+                }
+            }
+        }
+
+        if (restoreItems.isEmpty()) {
+            error("Valid AarishAI backup data nahi mila")
+        }
+
+        val hasMacroOrConfigData = restoreItems.any { item ->
+            item.first == "recorded_gestures" ||
+                item.first == "active_config" ||
+                item.first == "config_list_json" ||
+                item.first.startsWith("config_")
+        }
+
+        if (!hasMacroOrConfigData) {
+            error("Backup me macro/config data nahi mila")
+        }
+
+        val editor = getSharedPreferences(PREF_SCREEN_COMMAND_STORE, Context.MODE_PRIVATE).edit()
+        editor.clear()
+
+        for ((key, type, value) in restoreItems) {
+            when (type) {
+                "String" -> editor.putString(key, value as? String ?: "")
+                "Int" -> editor.putInt(key, value as? Int ?: 0)
+                "Long" -> editor.putLong(key, value as? Long ?: 0L)
+                "Float" -> editor.putFloat(key, value as? Float ?: 0f)
+                "Boolean" -> editor.putBoolean(key, value as? Boolean ?: false)
+                "StringSet" -> {
+                    val safeSet = (value as? Set<*>)
+                        ?.filterIsInstance<String>()
+                        ?.map { it.trim() }
+                        ?.filter { it.isNotBlank() }
+                        ?.toSet()
+                        ?: emptySet()
+                    editor.putStringSet(key, safeSet)
                 }
             }
         }
@@ -243,7 +307,11 @@ class MainActivity : Activity() {
         if (!editor.commit()) {
             error("SharedPreferences commit fail")
         }
+
+        // Restore ke baad config list corrupt/duplicate ho to auto-repair.
+        GestureStore.getAllConfigNames(this)
     }
+
 
     private fun startScreenCommandSystem(forceOpenSettings: Boolean) {
         if (isFinishing || isDestroyed) return
