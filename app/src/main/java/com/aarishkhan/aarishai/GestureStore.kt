@@ -15,6 +15,7 @@ data class TargetSnapshot(
     val targetDesc: String? = null,
     val targetId: String? = null,
     val targetClass: String? = null,
+    val targetPackage: String? = null,
     val targetContextText: String? = null,
     val targetChildText: String? = null,
     val targetSiblingText: String? = null,
@@ -41,6 +42,7 @@ data class RecordedGesture(
     val targetDesc: String? = null,
     val targetId: String? = null,
     val targetClass: String? = null,
+    val targetPackage: String? = null,
     val targetContextText: String? = null,
     val targetChildText: String? = null,
     val targetSiblingText: String? = null,
@@ -73,6 +75,7 @@ object GestureStore {
     private const val DEFAULT_CONFIG = "Default Config"
     private const val CONFIG_KEY_PREFIX = "config_"
     private const val KEY_NEXT_CONFIG_PREFIX = "next_config_"
+    private const val KEY_TAP_ACCURACY_MODE = "tap_accuracy_mode"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -83,6 +86,7 @@ object GestureStore {
             .replace(Regex("\\s+"), " ")
             .replace(Regex("[^\\p{L}\\p{N} _.-]+"), "")
             .trim()
+            .trim('.', '-', '_')
             .take(40)
 
         return cleaned.ifBlank { DEFAULT_CONFIG }
@@ -127,31 +131,47 @@ object GestureStore {
     }
 
     fun getAllConfigNames(context: Context): List<String> {
-        val p = prefs(context)
-        val names = linkedSetOf<String>()
+    val p = prefs(context)
+    val names = linkedSetOf<String>()
 
-        names.add(DEFAULT_CONFIG)
+    names.add(DEFAULT_CONFIG)
 
-        val raw = p.getString(KEY_CONFIG_LIST, null)
-        if (!raw.isNullOrBlank()) {
-            try {
-                val arr = JSONArray(raw)
-                for (i in 0 until arr.length()) {
-                    val name = normalizeConfigName(arr.optString(i, ""))
-                    if (name.isNotBlank()) names.add(name)
-                }
-            } catch (_: Exception) {
-                raw.split(",")
-                    .map { normalizeConfigName(it) }
-                    .filter { it.isNotBlank() }
-                    .forEach { names.add(it) }
+    val raw = p.getString(KEY_CONFIG_LIST, null)
+    if (!raw.isNullOrBlank()) {
+        try {
+            val arr = JSONArray(raw)
+            for (i in 0 until arr.length()) {
+                val name = normalizeConfigName(arr.optString(i, ""))
+                if (name.isNotBlank()) names.add(name)
             }
+        } catch (_: Exception) {
+            raw.split(",")
+                .map { normalizeConfigName(it) }
+                .filter { it.isNotBlank() }
+                .forEach { names.add(it) }
         }
-
-        names.add(getActiveConfigName(context))
-
-        return names.toList()
     }
+
+    p.all.keys
+        .filter { key -> key != KEY_CONFIG_LIST && key.startsWith(CONFIG_KEY_PREFIX) }
+        .map { key -> normalizeConfigName(key.removePrefix(CONFIG_KEY_PREFIX)) }
+        .filter { it.isNotBlank() }
+        .forEach { names.add(it) }
+
+    names.add(getActiveConfigName(context))
+
+    // AARISH_CONFIG_LIST_REPAIR_V1: corrupt/duplicate config names ko clean + limit karo.
+    val finalNames = names
+        .map { normalizeConfigName(it) }
+        .filter { it.isNotBlank() }
+        .distinct()
+        .ifEmpty { listOf(DEFAULT_CONFIG) }
+        .take(80)
+
+    p.edit().putString(KEY_CONFIG_LIST, JSONArray(finalNames).toString()).apply()
+
+    return finalNames
+}
 
     private fun markActiveConfigInList(context: Context) {
         setActiveConfigName(context, getActiveConfigName(context))
@@ -164,6 +184,20 @@ object GestureStore {
     private fun cleanPercent(value: Float, fallback: Float = 0f): Float {
         val safe = if (value.isNaN() || value.isInfinite()) fallback else value
         return safe.coerceIn(0f, 1f)
+    }
+
+    // AARISH_PERCENT_PERSIST_FIX: NaN anchor ko 0,0 me convert mat karo; warna old/imported
+    // macros top-left par drift kar sakte hain. Missing anchor load hote waqt NaN hi rahega.
+    private fun putPercentIfFinite(obj: JSONObject, key: String, value: Float) {
+        if (!value.isNaN() && !value.isInfinite() && value in 0f..1f) {
+            obj.put(key, value.coerceIn(0f, 1f).toDouble())
+        }
+    }
+
+    private fun readPercentOrNaN(obj: JSONObject, key: String): Float {
+        if (!obj.has(key)) return Float.NaN
+        val value = obj.optDouble(key, Double.NaN).toFloat()
+        return if (value.isNaN() || value.isInfinite()) Float.NaN else value.coerceIn(0f, 1f)
     }
 
     private fun loadJsonForConfig(context: Context, configName: String): String? {
@@ -188,6 +222,7 @@ object GestureStore {
         val cleanGestures = gestures
             .filter { it.points.isNotEmpty() }
             .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+            .take(1200)
 
         if (cleanGestures.isEmpty()) return false
 
@@ -202,6 +237,7 @@ object GestureStore {
             gestureObject.put("targetDesc", gesture.targetDesc.orEmpty())
             gestureObject.put("targetId", gesture.targetId.orEmpty())
             gestureObject.put("targetClass", gesture.targetClass.orEmpty())
+            gestureObject.put("targetPackage", gesture.targetPackage.orEmpty())
             gestureObject.put("targetContextText", gesture.targetContextText.orEmpty())
             gestureObject.put("targetChildText", gesture.targetChildText.orEmpty())
             gestureObject.put("targetSiblingText", gesture.targetSiblingText.orEmpty())
@@ -211,8 +247,8 @@ object GestureStore {
             gestureObject.put("targetTop", gesture.targetTop)
             gestureObject.put("targetRight", gesture.targetRight)
             gestureObject.put("targetBottom", gesture.targetBottom)
-            gestureObject.put("xPercent", cleanPercent(gesture.xPercent).toDouble())
-            gestureObject.put("yPercent", cleanPercent(gesture.yPercent).toDouble())
+            putPercentIfFinite(gestureObject, "xPercent", gesture.xPercent)
+            putPercentIfFinite(gestureObject, "yPercent", gesture.yPercent)
             gestureObject.put("targetWPercent", cleanPercent(gesture.targetWPercent).toDouble())
             gestureObject.put("targetHPercent", cleanPercent(gesture.targetHPercent).toDouble())
             gestureObject.put("insideXPercent", cleanPercent(gesture.insideXPercent, 0.5f).toDouble())
@@ -221,14 +257,20 @@ object GestureStore {
             gestureObject.put("recordedScreenH", gesture.recordedScreenH.coerceAtLeast(0))
 
             val pointsArray = JSONArray()
-            gesture.points
+            // AARISH_POINT_TIME_NORMALIZE_V1: imported/edited gestures me first point ka t > 0 ho
+            // to playback duration aur path timing drift kar sakti hai. Save ke time local t ko 0 se start rakho.
+            val rawPointsForSave = gesture.points
+                .filter { !it.x.isNaN() && !it.x.isInfinite() && !it.y.isNaN() && !it.y.isInfinite() }
                 .sortedBy { it.t.coerceAtLeast(0L) }
+            val pointBaseT = rawPointsForSave.firstOrNull()?.t?.coerceAtLeast(0L) ?: 0L
+
+            rawPointsForSave
                 .take(700)
                 .forEach { point ->
                     val pointObject = JSONObject()
                     pointObject.put("x", cleanCoordinate(point.x).toDouble())
                     pointObject.put("y", cleanCoordinate(point.y).toDouble())
-                    pointObject.put("t", point.t.coerceAtLeast(0L).coerceAtMost(60000L))
+                    pointObject.put("t", (point.t.coerceAtLeast(0L) - pointBaseT).coerceAtLeast(0L).coerceAtMost(60000L))
                     pointsArray.put(pointObject)
                 }
 
@@ -244,7 +286,8 @@ object GestureStore {
             .putString(currentGestureKey(context), mainArray.toString())
 
         if (getActiveConfigName(context) == DEFAULT_CONFIG) {
-            editor.remove(KEY_GESTURES)
+            // Legacy key ko turant remove nahi karte; modern key corrupt ho jaye to fallback useful rahega.
+            editor.putString(KEY_GESTURES, mainArray.toString())
         }
 
         return editor.commit()
@@ -281,6 +324,7 @@ object GestureStore {
                         targetDesc = cleanOpt(gestureObject, "targetDesc"),
                         targetId = cleanOpt(gestureObject, "targetId"),
                         targetClass = cleanOpt(gestureObject, "targetClass"),
+                        targetPackage = cleanOpt(gestureObject, "targetPackage"),
                         targetContextText = cleanOpt(gestureObject, "targetContextText"),
                         targetChildText = cleanOpt(gestureObject, "targetChildText"),
                         targetSiblingText = cleanOpt(gestureObject, "targetSiblingText"),
@@ -290,8 +334,8 @@ object GestureStore {
                         targetTop = gestureObject.optInt("targetTop", -1),
                         targetRight = gestureObject.optInt("targetRight", -1),
                         targetBottom = gestureObject.optInt("targetBottom", -1),
-                        xPercent = cleanPercent(gestureObject.optDouble("xPercent", 0.0).toFloat()),
-                        yPercent = cleanPercent(gestureObject.optDouble("yPercent", 0.0).toFloat()),
+                        xPercent = readPercentOrNaN(gestureObject, "xPercent"),
+                        yPercent = readPercentOrNaN(gestureObject, "yPercent"),
                         targetWPercent = cleanPercent(gestureObject.optDouble("targetWPercent", 0.0).toFloat()),
                         targetHPercent = cleanPercent(gestureObject.optDouble("targetHPercent", 0.0).toFloat()),
                         insideXPercent = cleanPercent(gestureObject.optDouble("insideXPercent", 0.5).toFloat(), 0.5f),
@@ -375,45 +419,43 @@ object GestureStore {
         return false
     }
 
-    fun setNextConfig(context: Context, currentName: String, nextName: String?): Boolean {
-        val safeCurrent = normalizeConfigName(currentName)
-        val editor = prefs(context).edit()
-        val key = nextKeyForName(safeCurrent)
+fun setNextConfig(context: Context, currentName: String, nextName: String?): Boolean {
+    val safeCurrent = normalizeConfigName(currentName)
+    val editor = prefs(context).edit()
+    val key = nextKeyForName(safeCurrent)
 
-        if (nextName.isNullOrBlank()) {
-            editor.remove(key)
-            editor.apply()
-            return true
-        }
-
-        val safeNext = normalizeConfigName(nextName)
-
-        if (safeNext == safeCurrent) {
-            editor.remove(key)
-            editor.apply()
-            return false
-        }
-
-        if (!getAllConfigNames(context).map { normalizeConfigName(it) }.contains(safeNext)) {
-            editor.remove(key)
-            editor.apply()
-            return false
-        }
-
-        if (!hasRecordingForConfig(context, safeNext)) {
-            editor.remove(key)
-            editor.apply()
-            return false
-        }
-
-        if (wouldCreateCycle(context, safeCurrent, safeNext)) {
-            return false
-        }
-
-        editor.putString(key, safeNext)
-        editor.apply()
-        return true
+    if (nextName.isNullOrBlank()) {
+        editor.remove(key)
+        return editor.commit()
     }
+
+    val safeNext = normalizeConfigName(nextName)
+
+    if (safeNext == safeCurrent) {
+        editor.remove(key)
+        editor.commit()
+        return false
+    }
+
+    if (!getAllConfigNames(context).map { normalizeConfigName(it) }.contains(safeNext)) {
+        editor.remove(key)
+        editor.commit()
+        return false
+    }
+
+    if (!hasRecordingForConfig(context, safeNext)) {
+        editor.remove(key)
+        editor.commit()
+        return false
+    }
+
+    if (wouldCreateCycle(context, safeCurrent, safeNext)) {
+        return false
+    }
+
+    editor.putString(key, safeNext)
+    return editor.commit()
+}
 
     fun clearChainFrom(context: Context, startName: String): Int {
         val p = prefs(context)
@@ -478,7 +520,7 @@ object GestureStore {
         oldNames.forEach { configName ->
             val key = nextKeyForName(configName)
             val next = prefs(context).getString(key, null)
-            if (normalizeConfigName(next) == safeName) {
+            if (!next.isNullOrBlank() && normalizeConfigName(next) == safeName) {
                 editor.remove(key)
             }
         }
@@ -491,7 +533,7 @@ object GestureStore {
         val p = prefs(context)
 
         val editor = p.edit()
-            .remove(currentGestureKey(context))
+            .remove(configKey(active))
             .remove(nextKeyForName(active))
             .putString(loopModeKeyForName(active), "ONCE")
             .putInt(loopValueKeyForName(active), 1)
@@ -502,7 +544,7 @@ object GestureStore {
         getAllConfigNames(context).forEach { configName ->
             val key = nextKeyForName(configName)
             val next = p.getString(key, null)
-            if (normalizeConfigName(next) == active) {
+            if (!next.isNullOrBlank() && normalizeConfigName(next) == active) {
                 editor.remove(key)
             }
         }
@@ -560,4 +602,32 @@ object GestureStore {
             else -> 1
         }
     }
+
+    // AARISH_TAP_ACCURACY_MODE_V1: global offline smart-click strictness switch.
+    fun saveTapAccuracyMode(context: Context, mode: String) {
+        val safeMode = when (mode.trim().uppercase()) {
+            "STRICT" -> "STRICT"
+            "RELAXED" -> "RELAXED"
+            else -> "BALANCED"
+        }
+        prefs(context).edit().putString(KEY_TAP_ACCURACY_MODE, safeMode).apply()
+    }
+
+    fun getTapAccuracyMode(context: Context): String {
+        val raw = prefs(context).getString(KEY_TAP_ACCURACY_MODE, "BALANCED") ?: "BALANCED"
+        return when (raw.trim().uppercase()) {
+            "STRICT" -> "STRICT"
+            "RELAXED" -> "RELAXED"
+            else -> "BALANCED"
+        }
+    }
+
+    fun getTapAccuracyModeLabel(context: Context): String {
+        return when (getTapAccuracyMode(context)) {
+            "STRICT" -> "Strict"
+            "RELAXED" -> "Relaxed"
+            else -> "Balanced"
+        }
+    }
+
 }

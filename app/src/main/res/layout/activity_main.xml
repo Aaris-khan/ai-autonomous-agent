@@ -2,19 +2,24 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#F7F8FC"
-    android:padding="28dp">
+    android:background="@drawable/bg_main_soft"
+    android:padding="24dp">
 
     <Button
         android:id="@+id/btnScreenCommand"
         android:layout_width="match_parent"
-        android:layout_height="70dp"
+        android:layout_height="72dp"
         android:layout_gravity="center"
+        android:background="@drawable/bg_screen_command_button"
+        android:contentDescription="Screen Command"
+        android:elevation="10dp"
+        android:includeFontPadding="false"
+        android:letterSpacing="0.03"
+        android:minHeight="72dp"
+        android:stateListAnimator="@null"
         android:text="SCREEN COMMAND"
+        android:textAllCaps="false"
         android:textColor="#FFFFFF"
-        android:backgroundTint="#111827"
-        android:elevation="6dp"
-        android:minHeight="70dp"
-        android:textSize="22sp"
+        android:textSize="19sp"
         android:textStyle="bold" />
 </FrameLayout>

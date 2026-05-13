@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_main_soft"
+    android:padding="28dp">
+
+    <Button
+        android:id="@+id/btnScreenCommand"
+        android:layout_width="match_parent"
+        android:layout_height="70dp"
+        android:layout_gravity="center"
+        android:background="@drawable/bg_screen_command_button"
+        android:elevation="7dp"
+        android:minHeight="70dp"
+        android:stateListAnimator="@null"
+        android:text="SCREEN COMMAND"
+        android:textColor="#FFFFFF"
+        android:textSize="22sp"
+        android:textStyle="bold" />
+</FrameLayout>

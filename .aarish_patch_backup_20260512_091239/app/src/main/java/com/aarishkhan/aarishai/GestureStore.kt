@@ -1,0 +1,575 @@
+package com.aarishkhan.aarishai
+
+import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
+
+data class GesturePoint(
+    val x: Float,
+    val y: Float,
+    val t: Long
+)
+
+data class TargetSnapshot(
+    val targetText: String? = null,
+    val targetDesc: String? = null,
+    val targetId: String? = null,
+    val targetClass: String? = null,
+    val targetContextText: String? = null,
+    val targetChildText: String? = null,
+    val targetSiblingText: String? = null,
+    val targetRoleFlags: String? = null,
+    val targetTreePath: String? = null,
+    val targetLeft: Int = -1,
+    val targetTop: Int = -1,
+    val targetRight: Int = -1,
+    val targetBottom: Int = -1,
+    val xPercent: Float = 0f,
+    val yPercent: Float = 0f,
+    val targetWPercent: Float = 0f,
+    val targetHPercent: Float = 0f,
+    val insideXPercent: Float = 0.5f,
+    val insideYPercent: Float = 0.5f,
+    val recordedScreenW: Int = 0,
+    val recordedScreenH: Int = 0
+)
+
+data class RecordedGesture(
+    val delayFromStart: Long,
+    val points: List<GesturePoint>,
+    val targetText: String? = null,
+    val targetDesc: String? = null,
+    val targetId: String? = null,
+    val targetClass: String? = null,
+    val targetContextText: String? = null,
+    val targetChildText: String? = null,
+    val targetSiblingText: String? = null,
+    val targetRoleFlags: String? = null,
+    val targetTreePath: String? = null,
+    val targetLeft: Int = -1,
+    val targetTop: Int = -1,
+    val targetRight: Int = -1,
+    val targetBottom: Int = -1,
+    val xPercent: Float = 0f,
+    val yPercent: Float = 0f,
+    val targetWPercent: Float = 0f,
+    val targetHPercent: Float = 0f,
+    val insideXPercent: Float = 0.5f,
+    val insideYPercent: Float = 0.5f,
+    val recordedScreenW: Int = 0,
+    val recordedScreenH: Int = 0
+)
+
+object GestureStore {
+    private const val PREF_NAME = "screen_command_store"
+
+    private const val KEY_GESTURES = "recorded_gestures"
+
+    private const val KEY_LOOP_MODE = "loop_mode"
+    private const val KEY_LOOP_VALUE = "loop_value"
+
+    private const val KEY_ACTIVE_CONFIG = "active_config"
+    private const val KEY_CONFIG_LIST = "config_list_json"
+    private const val DEFAULT_CONFIG = "Default Config"
+    private const val CONFIG_KEY_PREFIX = "config_"
+    private const val KEY_NEXT_CONFIG_PREFIX = "next_config_"
+
+    private fun prefs(context: Context) =
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+
+    private fun normalizeConfigName(name: String?): String {
+        val cleaned = (name ?: DEFAULT_CONFIG)
+            .replace(Regex("[\\r\\n\\t]+"), " ")
+            .replace(Regex("\\s+"), " ")
+            .replace(Regex("[^\\p{L}\\p{N} _.-]+"), "")
+            .trim()
+            .trim('.', '-', '_')
+            .take(40)
+
+        return cleaned.ifBlank { DEFAULT_CONFIG }
+    }
+
+    private fun configKey(name: String): String {
+        return CONFIG_KEY_PREFIX + normalizeConfigName(name)
+    }
+
+    private fun currentGestureKey(context: Context): String {
+        return configKey(getActiveConfigName(context))
+    }
+
+    private fun loopModeKeyForName(name: String): String {
+        return KEY_LOOP_MODE + "_" + normalizeConfigName(name)
+    }
+
+    private fun loopValueKeyForName(name: String): String {
+        return KEY_LOOP_VALUE + "_" + normalizeConfigName(name)
+    }
+
+    private fun nextKeyForName(name: String): String {
+        return KEY_NEXT_CONFIG_PREFIX + normalizeConfigName(name)
+    }
+
+    fun getActiveConfigName(context: Context): String {
+        return normalizeConfigName(
+            prefs(context).getString(KEY_ACTIVE_CONFIG, DEFAULT_CONFIG)
+        )
+    }
+
+    fun setActiveConfigName(context: Context, name: String) {
+        val safeName = normalizeConfigName(name)
+        val allNames = (getAllConfigNames(context) + safeName)
+            .map { normalizeConfigName(it) }
+            .distinct()
+
+        prefs(context).edit()
+            .putString(KEY_ACTIVE_CONFIG, safeName)
+            .putString(KEY_CONFIG_LIST, JSONArray(allNames).toString())
+            .apply()
+    }
+
+    fun getAllConfigNames(context: Context): List<String> {
+    val p = prefs(context)
+    val names = linkedSetOf<String>()
+
+    names.add(DEFAULT_CONFIG)
+
+    val raw = p.getString(KEY_CONFIG_LIST, null)
+    if (!raw.isNullOrBlank()) {
+        try {
+            val arr = JSONArray(raw)
+            for (i in 0 until arr.length()) {
+                val name = normalizeConfigName(arr.optString(i, ""))
+                if (name.isNotBlank()) names.add(name)
+            }
+        } catch (_: Exception) {
+            raw.split(",")
+                .map { normalizeConfigName(it) }
+                .filter { it.isNotBlank() }
+                .forEach { names.add(it) }
+        }
+    }
+
+    p.all.keys
+        .filter { key -> key != KEY_CONFIG_LIST && key.startsWith(CONFIG_KEY_PREFIX) }
+        .map { key -> normalizeConfigName(key.removePrefix(CONFIG_KEY_PREFIX)) }
+        .filter { it.isNotBlank() }
+        .forEach { names.add(it) }
+
+    names.add(getActiveConfigName(context))
+
+    val finalNames = names.map { normalizeConfigName(it) }.distinct()
+    if (finalNames.isNotEmpty()) {
+        p.edit().putString(KEY_CONFIG_LIST, JSONArray(finalNames).toString()).apply()
+    }
+
+    return finalNames
+}
+
+    private fun markActiveConfigInList(context: Context) {
+        setActiveConfigName(context, getActiveConfigName(context))
+    }
+
+    private fun cleanCoordinate(value: Float): Float {
+        return if (value.isNaN() || value.isInfinite()) 0f else value
+    }
+
+    private fun cleanPercent(value: Float, fallback: Float = 0f): Float {
+        val safe = if (value.isNaN() || value.isInfinite()) fallback else value
+        return safe.coerceIn(0f, 1f)
+    }
+
+    private fun loadJsonForConfig(context: Context, configName: String): String? {
+        val p = prefs(context)
+        val safeName = normalizeConfigName(configName)
+        val modern = p.getString(configKey(safeName), null)
+
+        if (!modern.isNullOrBlank()) return modern
+
+        return if (safeName == DEFAULT_CONFIG) {
+            p.getString(KEY_GESTURES, null)
+        } else {
+            null
+        }
+    }
+
+    private fun loadJsonForActiveConfig(context: Context): String? {
+        return loadJsonForConfig(context, getActiveConfigName(context))
+    }
+
+    fun save(context: Context, gestures: List<RecordedGesture>): Boolean {
+        val cleanGestures = gestures
+            .filter { it.points.isNotEmpty() }
+            .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+            .take(1200)
+
+        if (cleanGestures.isEmpty()) return false
+
+        markActiveConfigInList(context)
+
+        val mainArray = JSONArray()
+
+        cleanGestures.forEach { gesture ->
+            val gestureObject = JSONObject()
+            gestureObject.put("delayFromStart", gesture.delayFromStart.coerceAtLeast(0L))
+            gestureObject.put("targetText", gesture.targetText.orEmpty())
+            gestureObject.put("targetDesc", gesture.targetDesc.orEmpty())
+            gestureObject.put("targetId", gesture.targetId.orEmpty())
+            gestureObject.put("targetClass", gesture.targetClass.orEmpty())
+            gestureObject.put("targetContextText", gesture.targetContextText.orEmpty())
+            gestureObject.put("targetChildText", gesture.targetChildText.orEmpty())
+            gestureObject.put("targetSiblingText", gesture.targetSiblingText.orEmpty())
+            gestureObject.put("targetRoleFlags", gesture.targetRoleFlags.orEmpty())
+            gestureObject.put("targetTreePath", gesture.targetTreePath.orEmpty())
+            gestureObject.put("targetLeft", gesture.targetLeft)
+            gestureObject.put("targetTop", gesture.targetTop)
+            gestureObject.put("targetRight", gesture.targetRight)
+            gestureObject.put("targetBottom", gesture.targetBottom)
+            gestureObject.put("xPercent", cleanPercent(gesture.xPercent).toDouble())
+            gestureObject.put("yPercent", cleanPercent(gesture.yPercent).toDouble())
+            gestureObject.put("targetWPercent", cleanPercent(gesture.targetWPercent).toDouble())
+            gestureObject.put("targetHPercent", cleanPercent(gesture.targetHPercent).toDouble())
+            gestureObject.put("insideXPercent", cleanPercent(gesture.insideXPercent, 0.5f).toDouble())
+            gestureObject.put("insideYPercent", cleanPercent(gesture.insideYPercent, 0.5f).toDouble())
+            gestureObject.put("recordedScreenW", gesture.recordedScreenW.coerceAtLeast(0))
+            gestureObject.put("recordedScreenH", gesture.recordedScreenH.coerceAtLeast(0))
+
+            val pointsArray = JSONArray()
+            gesture.points
+                .sortedBy { it.t.coerceAtLeast(0L) }
+                .take(700)
+                .forEach { point ->
+                    val pointObject = JSONObject()
+                    pointObject.put("x", cleanCoordinate(point.x).toDouble())
+                    pointObject.put("y", cleanCoordinate(point.y).toDouble())
+                    pointObject.put("t", point.t.coerceAtLeast(0L).coerceAtMost(60000L))
+                    pointsArray.put(pointObject)
+                }
+
+            if (pointsArray.length() > 0) {
+                gestureObject.put("points", pointsArray)
+                mainArray.put(gestureObject)
+            }
+        }
+
+        if (mainArray.length() == 0) return false
+
+        val editor = prefs(context).edit()
+            .putString(currentGestureKey(context), mainArray.toString())
+
+        if (getActiveConfigName(context) == DEFAULT_CONFIG) {
+            // Legacy key ko turant remove nahi karte; modern key corrupt ho jaye to fallback useful rahega.
+            editor.putString(KEY_GESTURES, mainArray.toString())
+        }
+
+        return editor.commit()
+    }
+
+    private fun parseGesturesFromJson(json: String): List<RecordedGesture> {
+        return try {
+            val mainArray = JSONArray(json)
+            val result = mutableListOf<RecordedGesture>()
+
+            for (i in 0 until mainArray.length()) {
+                val gestureObject = mainArray.optJSONObject(i) ?: continue
+                val pointsArray = gestureObject.optJSONArray("points") ?: continue
+                val points = mutableListOf<GesturePoint>()
+
+                for (j in 0 until pointsArray.length()) {
+                    val pointObject = pointsArray.optJSONObject(j) ?: continue
+                    points.add(
+                        GesturePoint(
+                            x = cleanCoordinate(pointObject.optDouble("x", 0.0).toFloat()),
+                            y = cleanCoordinate(pointObject.optDouble("y", 0.0).toFloat()),
+                            t = pointObject.optLong("t", 0L).coerceAtLeast(0L).coerceAtMost(60000L)
+                        )
+                    )
+                }
+
+                if (points.isEmpty()) continue
+
+                result.add(
+                    RecordedGesture(
+                        delayFromStart = gestureObject.optLong("delayFromStart", 0L).coerceAtLeast(0L),
+                        points = points.sortedBy { it.t },
+                        targetText = cleanOpt(gestureObject, "targetText"),
+                        targetDesc = cleanOpt(gestureObject, "targetDesc"),
+                        targetId = cleanOpt(gestureObject, "targetId"),
+                        targetClass = cleanOpt(gestureObject, "targetClass"),
+                        targetContextText = cleanOpt(gestureObject, "targetContextText"),
+                        targetChildText = cleanOpt(gestureObject, "targetChildText"),
+                        targetSiblingText = cleanOpt(gestureObject, "targetSiblingText"),
+                        targetRoleFlags = cleanOpt(gestureObject, "targetRoleFlags"),
+                        targetTreePath = cleanOpt(gestureObject, "targetTreePath"),
+                        targetLeft = gestureObject.optInt("targetLeft", -1),
+                        targetTop = gestureObject.optInt("targetTop", -1),
+                        targetRight = gestureObject.optInt("targetRight", -1),
+                        targetBottom = gestureObject.optInt("targetBottom", -1),
+                        xPercent = cleanPercent(gestureObject.optDouble("xPercent", 0.0).toFloat()),
+                        yPercent = cleanPercent(gestureObject.optDouble("yPercent", 0.0).toFloat()),
+                        targetWPercent = cleanPercent(gestureObject.optDouble("targetWPercent", 0.0).toFloat()),
+                        targetHPercent = cleanPercent(gestureObject.optDouble("targetHPercent", 0.0).toFloat()),
+                        insideXPercent = cleanPercent(gestureObject.optDouble("insideXPercent", 0.5).toFloat(), 0.5f),
+                        insideYPercent = cleanPercent(gestureObject.optDouble("insideYPercent", 0.5).toFloat(), 0.5f),
+                        recordedScreenW = gestureObject.optInt("recordedScreenW", 0).coerceAtLeast(0),
+                        recordedScreenH = gestureObject.optInt("recordedScreenH", 0).coerceAtLeast(0)
+                    )
+                )
+            }
+
+            result.sortedBy { it.delayFromStart }
+        } catch (e: Exception) {
+            android.util.Log.e("GestureStore", "Recording load failed", e)
+            emptyList()
+        }
+    }
+
+    fun load(context: Context): List<RecordedGesture> {
+        val json = loadJsonForActiveConfig(context) ?: return emptyList()
+        return parseGesturesFromJson(json)
+    }
+
+    fun loadConfig(context: Context, configName: String): List<RecordedGesture> {
+        val json = loadJsonForConfig(context, configName) ?: return emptyList()
+        return parseGesturesFromJson(json)
+    }
+
+    private fun cleanOpt(obj: JSONObject, key: String): String? {
+        return obj.optString(key, "").takeIf { it.isNotBlank() }
+    }
+
+    fun hasRecording(context: Context): Boolean {
+        return load(context).isNotEmpty()
+    }
+
+    fun hasRecordingForConfig(context: Context, configName: String): Boolean {
+        return loadConfig(context, configName).isNotEmpty()
+    }
+
+    fun totalDuration(context: Context): Long {
+        return totalDurationForConfig(context, getActiveConfigName(context))
+    }
+
+    fun totalDurationForConfig(context: Context, configName: String): Long {
+        val gestures = loadConfig(context, configName)
+        return gestures.maxOfOrNull { gesture ->
+            val gestureDuration = (gesture.points.lastOrNull()?.t ?: 0L).coerceAtMost(60000L)
+            gesture.delayFromStart + gestureDuration
+        } ?: 0L
+    }
+
+    fun getNextConfig(context: Context, currentName: String): String? {
+        val safeCurrent = normalizeConfigName(currentName)
+        val raw = prefs(context).getString(nextKeyForName(safeCurrent), null)
+        if (raw.isNullOrBlank()) return null
+
+        val safeNext = normalizeConfigName(raw)
+
+        if (safeNext == safeCurrent) return null
+        if (!getAllConfigNames(context).map { normalizeConfigName(it) }.contains(safeNext)) return null
+        if (!hasRecordingForConfig(context, safeNext)) return null
+
+        return safeNext
+    }
+
+    fun wouldCreateCycle(context: Context, currentName: String, nextName: String): Boolean {
+        val current = normalizeConfigName(currentName)
+        var cursor = normalizeConfigName(nextName)
+
+        if (current == cursor) return true
+
+        val seen = linkedSetOf<String>()
+        var guard = 0
+
+        while (guard < 200 && seen.add(cursor)) {
+            if (cursor == current) return true
+            cursor = getNextConfig(context, cursor) ?: return false
+            guard++
+        }
+
+        return false
+    }
+
+fun setNextConfig(context: Context, currentName: String, nextName: String?): Boolean {
+    val safeCurrent = normalizeConfigName(currentName)
+    val editor = prefs(context).edit()
+    val key = nextKeyForName(safeCurrent)
+
+    if (nextName.isNullOrBlank()) {
+        editor.remove(key)
+        return editor.commit()
+    }
+
+    val safeNext = normalizeConfigName(nextName)
+
+    if (safeNext == safeCurrent) {
+        editor.remove(key)
+        editor.commit()
+        return false
+    }
+
+    if (!getAllConfigNames(context).map { normalizeConfigName(it) }.contains(safeNext)) {
+        editor.remove(key)
+        editor.commit()
+        return false
+    }
+
+    if (!hasRecordingForConfig(context, safeNext)) {
+        editor.remove(key)
+        editor.commit()
+        return false
+    }
+
+    if (wouldCreateCycle(context, safeCurrent, safeNext)) {
+        return false
+    }
+
+    editor.putString(key, safeNext)
+    return editor.commit()
+}
+
+    fun clearChainFrom(context: Context, startName: String): Int {
+        val p = prefs(context)
+        val editor = p.edit()
+        val seen = linkedSetOf<String>()
+        var cursor = normalizeConfigName(startName)
+        var removed = 0
+        var guard = 0
+
+        while (guard < 200 && seen.add(cursor)) {
+            val key = nextKeyForName(cursor)
+            val rawNext = p.getString(key, null) ?: break
+            editor.remove(key)
+            removed++
+            cursor = normalizeConfigName(rawNext)
+            guard++
+        }
+
+        editor.apply()
+        return removed
+    }
+
+    fun getWorkflowChain(context: Context, startName: String, maxSteps: Int = 200): List<String> {
+        val chain = mutableListOf<String>()
+        val seen = linkedSetOf<String>()
+        var cursor = normalizeConfigName(startName)
+        var guard = 0
+
+        while (guard < maxSteps && seen.add(cursor)) {
+            chain.add(cursor)
+            val next = getNextConfig(context, cursor) ?: break
+            cursor = next
+            guard++
+        }
+
+        return chain
+    }
+
+    fun getWorkflowSummary(context: Context, startName: String): String {
+        val chain = getWorkflowChain(context, startName)
+        return if (chain.isEmpty()) normalizeConfigName(startName) else chain.joinToString(" ➜ ")
+    }
+
+    fun deleteConfig(context: Context, name: String): Boolean {
+        val safeName = normalizeConfigName(name)
+        if (safeName == DEFAULT_CONFIG) return false
+
+        val oldNames = getAllConfigNames(context).map { normalizeConfigName(it) }.distinct()
+        val updatedNames = oldNames
+            .filter { it != safeName }
+            .distinct()
+            .ifEmpty { listOf(DEFAULT_CONFIG) }
+
+        val editor = prefs(context).edit()
+            .remove(configKey(safeName))
+            .remove(loopModeKeyForName(safeName))
+            .remove(loopValueKeyForName(safeName))
+            .remove(nextKeyForName(safeName))
+            .putString(KEY_ACTIVE_CONFIG, DEFAULT_CONFIG)
+            .putString(KEY_CONFIG_LIST, JSONArray(updatedNames).toString())
+
+        oldNames.forEach { configName ->
+            val key = nextKeyForName(configName)
+            val next = prefs(context).getString(key, null)
+            if (!next.isNullOrBlank() && normalizeConfigName(next) == safeName) {
+                editor.remove(key)
+            }
+        }
+
+        return editor.commit()
+    }
+
+    fun clear(context: Context) {
+        val active = getActiveConfigName(context)
+        val p = prefs(context)
+
+        val editor = p.edit()
+            .remove(configKey(active))
+            .remove(nextKeyForName(active))
+            .putString(loopModeKeyForName(active), "ONCE")
+            .putInt(loopValueKeyForName(active), 1)
+
+        // Ghost Link Fix:
+        // Agar kisi aur config ka next link is active config par aa raha tha,
+        // to recording clear hone par woh stale incoming link bhi remove karo.
+        getAllConfigNames(context).forEach { configName ->
+            val key = nextKeyForName(configName)
+            val next = p.getString(key, null)
+            if (!next.isNullOrBlank() && normalizeConfigName(next) == active) {
+                editor.remove(key)
+            }
+        }
+
+        if (active == DEFAULT_CONFIG) {
+            editor.remove(KEY_GESTURES)
+        }
+
+        editor.commit()
+    }
+
+    fun saveLoopSettings(context: Context, mode: String, value: Int) {
+        saveLoopSettingsForConfig(context, getActiveConfigName(context), mode, value)
+    }
+
+    fun saveLoopSettingsForConfig(context: Context, configName: String, mode: String, value: Int) {
+        val safeMode = when (mode) {
+            "COUNT", "INFINITE", "TIME" -> mode
+            else -> "ONCE"
+        }
+        val safeValue = when (safeMode) {
+            "COUNT" -> value.coerceIn(1, 9999)
+            "TIME" -> value.coerceIn(1, 1440)
+            "INFINITE" -> 0
+            else -> 1
+        }
+
+        prefs(context).edit()
+            .putString(loopModeKeyForName(configName), safeMode)
+            .putInt(loopValueKeyForName(configName), safeValue)
+            .apply()
+    }
+
+    fun getLoopMode(context: Context): String {
+        return getLoopModeForConfig(context, getActiveConfigName(context))
+    }
+
+    fun getLoopValue(context: Context): Int {
+        return getLoopValueForConfig(context, getActiveConfigName(context))
+    }
+
+    fun getLoopModeForConfig(context: Context, configName: String): String {
+        val mode = prefs(context).getString(loopModeKeyForName(configName), "ONCE") ?: "ONCE"
+        return when (mode) {
+            "COUNT", "INFINITE", "TIME" -> mode
+            else -> "ONCE"
+        }
+    }
+
+    fun getLoopValueForConfig(context: Context, configName: String): Int {
+        return when (getLoopModeForConfig(context, configName)) {
+            "COUNT" -> prefs(context).getInt(loopValueKeyForName(configName), 10).coerceIn(1, 9999)
+            "TIME" -> prefs(context).getInt(loopValueKeyForName(configName), 5).coerceIn(1, 1440)
+            "INFINITE" -> 0
+            else -> 1
+        }
+    }
+}

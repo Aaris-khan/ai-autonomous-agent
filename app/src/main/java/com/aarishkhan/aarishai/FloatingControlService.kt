@@ -6,7 +6,6 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Build
@@ -27,10 +26,27 @@ class FloatingControlService : Service() {
 
     companion object {
         @Volatile var instance: FloatingControlService? = null
+
+        // Android 14 specialUse foreground-service type = 0x40000000.
+        // Literal rakha hai taaki compileSdk mismatch par ServiceInfo constant unresolved na ho.
+        private const val FGS_TYPE_SPECIAL_USE_COMPAT = 0x40000000
     }
 
     fun isRecordingActive(): Boolean = isRecording
 
+    fun pokePanelToFront() {
+        handler.post {
+            if (instance !== this@FloatingControlService) return@post
+            if (!::windowManager.isInitialized) return@post
+
+            if (panelView == null) {
+                showFloatingPanel()
+            } else {
+                restorePanelUI()
+                bringPanelToFront()
+            }
+        }
+    }
 
     private lateinit var windowManager: WindowManager
     private var panelView: View? = null
@@ -46,12 +62,15 @@ class FloatingControlService : Service() {
     private var btnClear: android.widget.Button? = null
     private lateinit var btnLoop: Button
     private lateinit var btnWorkflow: Button
+    private lateinit var btnTools: Button
+    private lateinit var btnSystem: Button
     private lateinit var btnSave: Button
     private lateinit var btnUndo: Button
     private lateinit var btnCut: Button
 
         private var isRecording = false
     private var pendingDiscardConfirm = false
+    private var isSavingRecording = false
     private var unsavedGestures: List<RecordedGesture> = emptyList()
     private val handler = Handler(Looper.getMainLooper())
 
@@ -103,12 +122,12 @@ class FloatingControlService : Service() {
             }
         }
 
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        return if (Build.VERSION.SDK_INT >= 34) {
             try {
                 startForeground(
                     1,
                     notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                    FGS_TYPE_SPECIAL_USE_COMPAT
                 )
                 true
             } catch (_: Exception) {
@@ -119,157 +138,247 @@ class FloatingControlService : Service() {
         }
     }
 
+
+private fun dp(value: Int): Int {
+    return (value * resources.displayMetrics.density).toInt().coerceAtLeast(1)
+}
+
+private fun darken(color: Int, factor: Float): Int {
+    return Color.rgb(
+        (Color.red(color) * factor).toInt().coerceIn(0, 255),
+        (Color.green(color) * factor).toInt().coerceIn(0, 255),
+        (Color.blue(color) * factor).toInt().coerceIn(0, 255)
+    )
+}
+
+private fun stylePanelButton(button: Button, bgColor: Int, fgColor: Int = Color.WHITE, minWdp: Int = 42) {
+    val compact = resources.displayMetrics.widthPixels < dp(390)
+    val density = resources.displayMetrics.density
+    val radius = (if (compact) 14f else 17f) * density
+    val targetHeight = if (compact) 34 else 39
+    val targetWidth = if (compact) (minWdp - 6).coerceAtLeast(30) else minWdp
+
+    button.minHeight = dp(targetHeight)
+    button.minimumHeight = dp(targetHeight)
+    button.minWidth = dp(targetWidth)
+    button.minimumWidth = dp(targetWidth)
+    button.setPadding(dp(if (compact) 4 else 7), dp(1), dp(if (compact) 4 else 7), dp(1))
+    button.textSize = if (compact) 9.2f else 10.6f
+    button.maxLines = 1
+    button.isSingleLine = true
+    button.isAllCaps = false
+    button.includeFontPadding = false
+    button.textAlignment = View.TEXT_ALIGNMENT_CENTER
+    button.setTextColor(fgColor)
+
+    (button.layoutParams as? LinearLayout.LayoutParams)?.let { lp ->
+        lp.setMargins(dp(2), 0, dp(2), 0)
+        button.layoutParams = lp
+    }
+
+    val normal = android.graphics.drawable.GradientDrawable().apply {
+        cornerRadius = radius
+        setColor(bgColor)
+        setStroke(dp(1), Color.argb(104, 255, 255, 255))
+    }
+    val pressed = android.graphics.drawable.GradientDrawable().apply {
+        cornerRadius = radius
+        setColor(darken(bgColor, 0.78f))
+        setStroke(dp(1), Color.argb(170, 255, 255, 255))
+    }
+
+    button.background = android.graphics.drawable.StateListDrawable().apply {
+        addState(intArrayOf(android.R.attr.state_pressed), pressed)
+        addState(intArrayOf(), normal)
+    }
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+        button.elevation = dp(if (compact) 2 else 3).toFloat()
+        button.stateListAnimator = null
+    }
+}
+
+private fun refreshPanelButtonStyles() {
+    if (!::btnStart.isInitialized) return
+
+    val startBg = when (btnStart.text?.toString()) {
+        "STOP" -> Color.rgb(239, 68, 68)
+        "HIDE" -> Color.rgb(245, 158, 11)
+        "+ ADD" -> Color.rgb(37, 99, 235)
+        "PLAY" -> Color.rgb(16, 185, 129)
+        else -> Color.rgb(99, 102, 241)
+    }
+
+    stylePanelButton(btnStart, startBg, Color.WHITE, 48)
+    if (::btnLoop.isInitialized) stylePanelButton(btnLoop, Color.rgb(6, 182, 212), Color.WHITE, 38)
+    if (::btnWorkflow.isInitialized) stylePanelButton(btnWorkflow, Color.rgb(139, 92, 246), Color.WHITE, 40)
+    if (::btnTools.isInitialized) stylePanelButton(btnTools, Color.rgb(234, 88, 12), Color.WHITE, 36)
+    if (::btnSystem.isInitialized) stylePanelButton(btnSystem, Color.rgb(22, 163, 74), Color.WHITE, 38)
+    btnClear?.let { stylePanelButton(it, Color.rgb(30, 41, 59), Color.WHITE, 34) }
+    if (::btnSave.isInitialized) stylePanelButton(btnSave, Color.rgb(13, 148, 136), Color.WHITE, 42)
+    if (::btnUndo.isInitialized) stylePanelButton(btnUndo, Color.rgb(37, 99, 235), Color.WHITE, 42)
+    if (::btnCut.isInitialized) stylePanelButton(btnCut, Color.rgb(225, 29, 72), Color.WHITE, 34)
+}
+
     private fun showFloatingPanel() {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(14, 10, 14, 10)
-            background = android.graphics.drawable.GradientDrawable(
-                android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
-                intArrayOf(Color.rgb(17, 24, 39), Color.rgb(31, 41, 55))
-            ).apply {
-                cornerRadius = 18f * resources.displayMetrics.density
-                setStroke((1f * resources.displayMetrics.density).toInt().coerceAtLeast(1), Color.argb(80, 255, 255, 255))
-            }
-            elevation = 8f * resources.displayMetrics.density
+    val compact = resources.displayMetrics.widthPixels < dp(390)
+    val root = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(if (compact) 6 else 8), dp(7), dp(if (compact) 6 else 8), dp(7))
+        background = android.graphics.drawable.GradientDrawable(
+            android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
+            intArrayOf(Color.rgb(2, 6, 23), Color.rgb(67, 56, 202), Color.rgb(8, 145, 178), Color.rgb(13, 148, 136))
+        ).apply {
+            cornerRadius = 26f * resources.displayMetrics.density
+            setStroke(dp(1), Color.argb(190, 224, 242, 254))
         }
-
-        label = TextView(this).apply {
-            text = "📁 " + GestureStore.getActiveConfigName(this@FloatingControlService)
-            setTextColor(Color.WHITE)
-            textSize = 15f
-            setPadding(12, 0, 18, 0)
-            maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
-            maxWidth = (210 * resources.displayMetrics.density).toInt()
-            isClickable = true
-            setOnClickListener { showConfigManagerDialog() }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            elevation = 12f * resources.displayMetrics.density
         }
+    }
 
-        btnStart = Button(this).apply {
-            text = if (GestureStore.hasRecording(this@FloatingControlService)) "PLAY" else "START"
-            setOnClickListener { handleStartButton() }
+    label = TextView(this).apply {
+        text = "📁 " + GestureStore.getActiveConfigName(this@FloatingControlService)
+        setTextColor(Color.WHITE)
+        textSize = if (compact) 11.5f else 13f
+        setPadding(dp(if (compact) 5 else 7), 0, dp(if (compact) 5 else 7), 0)
+        maxLines = 1
+        ellipsize = android.text.TextUtils.TruncateAt.END
+        maxWidth = dp(if (compact) 64 else 92)
+        isClickable = true
+        setOnClickListener { showConfigManagerDialog() }
+    }
 
-            // BUG #1 FIX: Recording/Playback ke time clear nahi hoga
-                        setOnLongClickListener {
-                if (isRecording || AutoActionService.isPlaying() || unsavedGestures.isNotEmpty()) {
-                    Toast.makeText(
-                        this@FloatingControlService,
-                        "Recording/Unsaved command ke time clear nahi kar sakte",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                    true
-                } else {
-                    GestureStore.clear(this@FloatingControlService)
-                    unsavedGestures = emptyList()
-                                        btnStart.text = "START"
-                    btnStart.setOnClickListener { handleStartButton() }
-                    updateLoopButtonText(btnLoop)
-                    btnLoop.visibility = View.GONE
-                    if (::btnWorkflow.isInitialized) btnWorkflow.visibility = View.GONE
-                    btnSave.visibility = View.GONE
-                    btnClear?.visibility = View.GONE
-                    if (::btnUndo.isInitialized) btnUndo.visibility = View.GONE
-                    Toast.makeText(
-                        this@FloatingControlService,
-                        "Old command clear ho gaya",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                    true
-                }
+    btnStart = Button(this).apply {
+        text = if (GestureStore.hasRecording(this@FloatingControlService)) "PLAY" else "START"
+        setOnClickListener { handleStartButton() }
+        setOnLongClickListener {
+            if (isRecording || AutoActionService.isPlaying() || unsavedGestures.isNotEmpty()) {
+                Toast.makeText(
+                    this@FloatingControlService,
+                    "Recording/Unsaved command ke time clear nahi kar sakte",
+                    Toast.LENGTH_SHORT
+                ).show()
+                true
+            } else {
+                clearSavedRecordingFromPanel()
+                true
             }
         }
+    }
 
-        btnLoop = Button(this).apply {
+    btnLoop = Button(this).apply {
+        updateLoopButtonText(this)
+        setOnClickListener {
+            toggleLoopMode()
             updateLoopButtonText(this)
-            setOnClickListener {
-                toggleLoopMode()
-                updateLoopButtonText(this)
-            }
-            visibility = if (GestureStore.hasRecording(this@FloatingControlService)) View.VISIBLE else View.GONE
+            refreshPanelButtonStyles()
         }
-
-        btnWorkflow = Button(this).apply {
-            text = "🧱 WF"
-            setOnClickListener { showWorkflowHubDialog() }
-            visibility = if (GestureStore.hasRecording(this@FloatingControlService)) View.VISIBLE else View.GONE
-        }
-
-        btnClear = Button(this).apply {
-            text = "CLR"
-            visibility = if (GestureStore.hasRecording(this@FloatingControlService)) View.VISIBLE else View.GONE
-            setOnClickListener { clearSavedRecordingFromPanel() }
-        }
-
-                btnSave = Button(this).apply {
-            text = "SAVE"
-            visibility = View.GONE
-            setOnClickListener { saveRecording() }
-        }
-
-        btnUndo = Button(this).apply {
-            text = "UNDO"
-            visibility = if (GestureStore.hasRecording(this@FloatingControlService)) View.VISIBLE else View.GONE
-            setOnClickListener { undoLastStep() }
-        }
-
-        btnCut = Button(this).apply {
-            text = "CUT"
-            setOnClickListener { stopEverythingAndClose() }
-        }
-
-        root.addView(label)
-        root.addView(btnStart)
-        root.addView(btnLoop)
-        root.addView(btnWorkflow)
-        btnClear?.let { root.addView(it) }
-        root.addView(btnSave)
-        root.addView(btnUndo)
-        root.addView(btnCut)
-
-        updateWorkflowButtonUI()
-
-        val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            WindowManager.LayoutParams.TYPE_PHONE
-        }
-
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            overlayType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        )
-
-        params.gravity = Gravity.TOP or Gravity.START
-        params.x = 30
-        params.y = 120
-        panelParams = params
-
-        panelView = root
-        if (!safeAddView(root, params, "Floating panel open nahi hua")) {
-            stopSelf()
-            return
-        }
-        makePanelDraggable(label, root, params)
+        visibility = if (GestureStore.hasRecording(this@FloatingControlService)) View.VISIBLE else View.GONE
     }
 
-    private fun toggleLoopMode() {
-        val currentMode = GestureStore.getLoopMode(this)
-        val currentValue = GestureStore.getLoopValue(this)
-        when (currentMode) {
-            "ONCE" -> GestureStore.saveLoopSettings(this, "COUNT", 10)
-            "COUNT" -> GestureStore.saveLoopSettings(this, "INFINITE", 0)
-            "INFINITE" -> GestureStore.saveLoopSettings(this, "TIME", 5)
-            "TIME" -> {
-                if (currentValue == 5) GestureStore.saveLoopSettings(this, "TIME", 10)
-                else GestureStore.saveLoopSettings(this, "ONCE", 1)
-            }
-            else -> GestureStore.saveLoopSettings(this, "ONCE", 1)
-        }
+    btnWorkflow = Button(this).apply {
+        text = "🧱 WF"
+        setOnClickListener { showWorkflowHubDialog() }
+        visibility = if (GestureStore.hasRecording(this@FloatingControlService)) View.VISIBLE else View.GONE
     }
+
+    btnTools = Button(this).apply {
+        text = "⚡"
+        contentDescription = "Smart Tools"
+        setOnClickListener { showSmartToolsDialog() }
+        visibility = if (GestureStore.hasRecording(this@FloatingControlService)) View.VISIBLE else View.GONE
+    }
+
+    btnSystem = Button(this).apply {
+        text = "SYS"
+        contentDescription = "Record Back or Recents system action"
+        setOnClickListener { showSystemActionRecorderDialog() }
+        visibility = View.GONE
+    }
+
+    btnClear = Button(this).apply {
+        text = "CLR"
+        visibility = if (GestureStore.hasRecording(this@FloatingControlService)) View.VISIBLE else View.GONE
+        setOnClickListener { clearSavedRecordingFromPanel() }
+    }
+
+    btnSave = Button(this).apply {
+        text = "SAVE"
+        visibility = View.GONE
+        setOnClickListener { saveRecording() }
+    }
+
+    btnUndo = Button(this).apply {
+        text = "UNDO"
+        visibility = if (GestureStore.hasRecording(this@FloatingControlService)) View.VISIBLE else View.GONE
+        setOnClickListener { undoLastStep() }
+    }
+
+    btnCut = Button(this).apply {
+        text = "CUT"
+        setOnClickListener { stopEverythingAndClose() }
+    }
+
+    root.addView(label)
+    root.addView(btnStart)
+    root.addView(btnLoop)
+    root.addView(btnWorkflow)
+    root.addView(btnTools)
+    root.addView(btnSystem)
+    btnClear?.let { root.addView(it) }
+    root.addView(btnSave)
+    root.addView(btnUndo)
+    root.addView(btnCut)
+
+    updateWorkflowButtonUI()
+    refreshPanelButtonStyles()
+
+    val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+    } else {
+        @Suppress("DEPRECATION")
+        WindowManager.LayoutParams.TYPE_PHONE
+    }
+
+    val params = WindowManager.LayoutParams(
+        WindowManager.LayoutParams.WRAP_CONTENT,
+        WindowManager.LayoutParams.WRAP_CONTENT,
+        overlayType,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+        PixelFormat.TRANSLUCENT
+    )
+
+    params.gravity = Gravity.TOP or Gravity.START
+    params.x = dp(10)
+    params.y = dp(70)
+    panelParams = params
+
+    panelView = root
+    if (!safeAddView(root, params, "Floating panel open nahi hua")) {
+        stopSelf()
+        return
+    }
+    makePanelDraggable(label, root, params)
+}
+
+private fun toggleLoopMode() {
+    val active = GestureStore.getActiveConfigName(this)
+    val currentMode = GestureStore.getLoopModeForConfig(this, active)
+    val currentValue = GestureStore.getLoopValueForConfig(this, active)
+
+    when (currentMode) {
+        "ONCE" -> GestureStore.saveLoopSettingsForConfig(this, active, "COUNT", 10)
+        "COUNT" -> GestureStore.saveLoopSettingsForConfig(this, active, "INFINITE", 0)
+        "INFINITE" -> GestureStore.saveLoopSettingsForConfig(this, active, "TIME", 5)
+        "TIME" -> {
+            if (currentValue == 5) GestureStore.saveLoopSettingsForConfig(this, active, "TIME", 10)
+            else GestureStore.saveLoopSettingsForConfig(this, active, "ONCE", 1)
+        }
+        else -> GestureStore.saveLoopSettingsForConfig(this, active, "ONCE", 1)
+    }
+}
     private fun updateLoopButtonText(btn: Button) {
         val active = GestureStore.getActiveConfigName(this)
         val mode = GestureStore.getLoopModeForConfig(this, active)
@@ -284,86 +393,114 @@ class FloatingControlService : Service() {
 
     
 
-       private fun checkPlaybackStateContinuously() {
-        playbackWatcherRunnable?.let { handler.removeCallbacks(it) }
-                val watcher = object : Runnable {
-            override fun run() {
-                                if (!AutoActionService.isPlaying()) {
-                    if (!isRecording) {
-                        updateUIState(
-                            if (GestureStore.hasRecording(this@FloatingControlService)) "PLAY" else "START",
-                            false,
-                            true,
-                            true
-                        )
-                        restorePanelUI()
-                    }
-                    playbackWatcherRunnable = null
-                                        return
-                }
-                handler.postDelayed(this, 200)
+private fun checkPlaybackStateContinuously() {
+    playbackWatcherRunnable?.let { handler.removeCallbacks(it) }
+
+    val watcher = object : Runnable {
+        override fun run() {
+            if (instance !== this@FloatingControlService) {
+                playbackWatcherRunnable = null
+                return
             }
+
+            if (!AutoActionService.isPlaying()) {
+                if (!isRecording) {
+                    val hasSaved = GestureStore.hasRecording(this@FloatingControlService)
+                    updateUIState(if (hasSaved) "PLAY" else "START", false, hasSaved, true)
+                    restorePanelUI()
+                }
+                playbackWatcherRunnable = null
+                return
+            }
+
+            handler.postDelayed(this, 200L)
         }
-        playbackWatcherRunnable = watcher
-        handler.postDelayed(watcher, 200)
     }
+
+    playbackWatcherRunnable = watcher
+    handler.postDelayed(watcher, 200L)
+}
 
     private fun hidePanelUIForPlayback() {
-        if (panelHiddenForPlayback) return
-        panelHiddenForPlayback = true
-        btnSave.visibility = View.GONE
-        btnUndo.visibility = View.GONE
-        btnCut.visibility = View.GONE
-        label.visibility = View.GONE
-        btnLoop.visibility = View.GONE
-        if (::btnWorkflow.isInitialized) btnWorkflow.visibility = View.GONE
-        val params = panelParams
-        val panel = panelView
-                if (params != null && panel != null) {
-            oldPanelX = params.x
-            oldPanelY = params.y
-                        val density = resources.displayMetrics.density
-            val maxX = if (panel.width > 0) resources.displayMetrics.widthPixels - panel.width else resources.displayMetrics.widthPixels
-            val maxY = if (panel.height > 0) resources.displayMetrics.heightPixels - panel.height else resources.displayMetrics.heightPixels
+    if (panelHiddenForPlayback) return
+    panelHiddenForPlayback = true
 
-            params.x = (resources.displayMetrics.widthPixels - (120 * density).toInt()).coerceIn(0, if (maxX > 0) maxX else resources.displayMetrics.widthPixels)
-            params.y = (60 * density).toInt().coerceIn(0, if (maxY > 0) maxY else resources.displayMetrics.heightPixels)
+    if (::btnSave.isInitialized) btnSave.visibility = View.GONE
+    if (::btnUndo.isInitialized) btnUndo.visibility = View.GONE
+    if (::btnCut.isInitialized) btnCut.visibility = View.GONE
+    if (::label.isInitialized) label.visibility = View.GONE
+    if (::btnLoop.isInitialized) btnLoop.visibility = View.GONE
+    if (::btnWorkflow.isInitialized) btnWorkflow.visibility = View.GONE
+    if (::btnTools.isInitialized) btnTools.visibility = View.GONE
+    if (::btnSystem.isInitialized) btnSystem.visibility = View.GONE
+    btnClear?.visibility = View.GONE
 
-            try {
-                windowManager.updateViewLayout(panel, params)
-            } catch (_: Exception) {
-            }
-        }
+    val params = panelParams
+    val panel = panelView
+    if (params != null && panel != null) {
+        oldPanelX = params.x
+        oldPanelY = params.y
+        val maxX = if (panel.width > 0) resources.displayMetrics.widthPixels - panel.width else resources.displayMetrics.widthPixels
+        val maxY = if (panel.height > 0) resources.displayMetrics.heightPixels - panel.height else resources.displayMetrics.heightPixels
+
+        params.x = (resources.displayMetrics.widthPixels - dp(118)).coerceIn(0, if (maxX > 0) maxX else resources.displayMetrics.widthPixels)
+        params.y = dp(58).coerceIn(0, if (maxY > 0) maxY else resources.displayMetrics.heightPixels)
+        safeUpdateView(panel, params)
     }
+}
 
     // BUG #5 FIX: btnLoop tabhi dikhega jab actually recording save ho
         // BUG FIX: Empty recording par SAVE hide rahega
-    private fun restorePanelUI() {
-        panelHiddenForPlayback = false
-        btnSave.visibility = if (unsavedGestures.isNotEmpty()) View.VISIBLE else View.GONE
-        btnUndo.visibility = if (hasAnythingToUndo()) View.VISIBLE else View.GONE
-        btnCut.visibility = View.VISIBLE
-        label.visibility = View.VISIBLE
-        btnLoop.visibility = if (GestureStore.hasRecording(this)) View.VISIBLE else View.GONE
-        if (::btnWorkflow.isInitialized) { updateWorkflowButtonUI(); btnWorkflow.visibility = if (GestureStore.hasRecording(this)) View.VISIBLE else View.GONE }
-        btnClear?.visibility = if (GestureStore.hasRecording(this) && unsavedGestures.isEmpty()) View.VISIBLE else View.GONE
+private fun clampPanelToScreen(params: WindowManager.LayoutParams, panel: View) {
+    val metrics = resources.displayMetrics
+    val maxX = if (panel.width > 0) metrics.widthPixels - panel.width else metrics.widthPixels
+    val maxY = if (panel.height > 0) metrics.heightPixels - panel.height else metrics.heightPixels
+    params.x = params.x.coerceIn(0, if (maxX > 0) maxX else metrics.widthPixels)
+    params.y = params.y.coerceIn(0, if (maxY > 0) maxY else metrics.heightPixels)
+}
 
-        val params = panelParams
-        val panel = panelView
-        if (params != null && panel != null) {
-            val metrics = resources.displayMetrics
-            val maxX = if (panel.width > 0) metrics.widthPixels - panel.width else metrics.widthPixels
-            val maxY = if (panel.height > 0) metrics.heightPixels - panel.height else metrics.heightPixels
+private fun restorePanelUI() {
+    val shouldRestorePlaybackPosition = panelHiddenForPlayback
+    panelHiddenForPlayback = false
 
-            params.x = oldPanelX.coerceIn(0, if (maxX > 0) maxX else metrics.widthPixels)
-            params.y = oldPanelY.coerceIn(0, if (maxY > 0) maxY else metrics.heightPixels)
+    val hasSaved = GestureStore.hasRecording(this)
+    if (::btnSave.isInitialized) btnSave.visibility = if (unsavedGestures.isNotEmpty() || isRecording) View.VISIBLE else View.GONE
+    if (::btnUndo.isInitialized) btnUndo.visibility = if (hasAnythingToUndo()) View.VISIBLE else View.GONE
+    if (::btnCut.isInitialized) btnCut.visibility = View.VISIBLE
+    if (::label.isInitialized) label.visibility = View.VISIBLE
 
-            try {
-                windowManager.updateViewLayout(panel, params)
-            } catch (_: Exception) {
-            }
-        }
+    if (::btnLoop.isInitialized) {
+        updateLoopButtonText(btnLoop)
+        btnLoop.visibility = if (hasSaved && !isRecording) View.VISIBLE else View.GONE
     }
+
+    if (::btnWorkflow.isInitialized) {
+        updateWorkflowButtonUI()
+        btnWorkflow.visibility = if (hasSaved && !isRecording) View.VISIBLE else View.GONE
+    }
+
+    if (::btnTools.isInitialized) {
+        btnTools.visibility = if (hasSaved && !isRecording) View.VISIBLE else View.GONE
+    }
+
+    if (::btnSystem.isInitialized) {
+        btnSystem.visibility = if (isRecording) View.VISIBLE else View.GONE
+    }
+
+    btnClear?.visibility = if (hasSaved && unsavedGestures.isEmpty() && !isRecording) View.VISIBLE else View.GONE
+    refreshPanelButtonStyles()
+
+    val params = panelParams
+    val panel = panelView
+    if (params != null && panel != null) {
+        if (shouldRestorePlaybackPosition) {
+            params.x = oldPanelX
+            params.y = oldPanelY
+        }
+        clampPanelToScreen(params, panel)
+        safeUpdateView(panel, params)
+    }
+}
 
     
 
@@ -416,28 +553,51 @@ class FloatingControlService : Service() {
     }
 
     private fun showOverlayDialogSafely(dialog: android.app.AlertDialog) {
-        try {
-            closeSettingsPanel()
-            activeConfigDialog = dialog
-            dialog.setOnDismissListener {
-                if (activeConfigDialog === dialog) {
-                    activeConfigDialog = null
-                }
-            }
-            dialog.setOnShowListener {
-                try {
-                    prepareOverlayDialog(dialog)
-                } catch (_: Exception) {
-                }
-            }
-            prepareOverlayDialog(dialog)
-            dialog.show()
-            prepareOverlayDialog(dialog)
-        } catch (e: Exception) {
-            activeConfigDialog = null
-            Toast.makeText(this, "Config popup open nahi hua: ${e.message}", Toast.LENGTH_LONG).show()
+    try {
+        val oldDialog = activeConfigDialog
+        if (oldDialog != null && oldDialog !== dialog) {
+            try { oldDialog.dismiss() } catch (_: Exception) {}
         }
+
+        activeConfigDialog = dialog
+
+        dialog.setOnDismissListener {
+            if (activeConfigDialog === dialog) {
+                activeConfigDialog = null
+            }
+        }
+
+        // Overlay type ko show() se pehle set karna zaroori hai.
+        prepareOverlayDialog(dialog)
+        dialog.show()
+        // AARISH_DIALOG_TYPE_REAPPLY: service dialogs need overlay type even if window is created lazily.
+        prepareOverlayDialog(dialog)
+
+        dialog.window?.apply {
+            setDimAmount(0.18f)
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+
+            val lp = attributes
+            val screenW = resources.displayMetrics.widthPixels
+            lp.width = kotlin.math.min(screenW - dp(28), dp(440)).coerceAtLeast(dp(286))
+            attributes = lp
+        }
+
+        dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE)?.let {
+            stylePanelButton(it, Color.rgb(16, 185, 129), Color.WHITE, 72)
+        }
+        dialog.getButton(android.app.AlertDialog.BUTTON_NEGATIVE)?.let {
+            stylePanelButton(it, Color.rgb(71, 85, 105), Color.WHITE, 72)
+        }
+        dialog.getButton(android.app.AlertDialog.BUTTON_NEUTRAL)?.let {
+            stylePanelButton(it, Color.rgb(244, 63, 94), Color.WHITE, 72)
+        }
+    } catch (e: Exception) {
+        try { dialog.dismiss() } catch (_: Exception) {}
+        activeConfigDialog = null
+        Toast.makeText(this, "Config popup open nahi hua: ${e.message}", Toast.LENGTH_LONG).show()
     }
+}
 
     private fun updateWorkflowButtonUI() {
         if (!::btnWorkflow.isInitialized) return
@@ -446,6 +606,899 @@ class FloatingControlService : Service() {
         val chain = GestureStore.getWorkflowChain(this, active)
         btnWorkflow.text = if (chain.size > 1) "🧱 ${chain.size}" else "🧱 WF"
     }
+
+
+// AARISH_SMART_TOOLS_V1: offline autoclicker power tools without changing full UI.
+private fun showSmartToolsDialog() {
+    if (isRecording || AutoActionService.isPlaying() || unsavedGestures.isNotEmpty()) {
+        Toast.makeText(this, "Recording/Play/Unsaved edit ke time Smart Tools locked hain", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    if (!GestureStore.hasRecording(this)) {
+        Toast.makeText(this, "Smart Tools ke liye pehle ek macro SAVE karo", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    val active = GestureStore.getActiveConfigName(this)
+    val items = arrayOf(
+        "⚡ Burst Repeat Last Click",
+        "⏳ Add Safe Start Delay",
+        "🧹 Smooth Long Wait Gaps",
+        "🎯 Stabilize Tap Jitter",
+        "🚀 Speed Up Macro",
+        "🛡️ Add Minimum Tap Gap",
+        "🧠 One Tap Optimize Macro",
+        "📊 Active Macro Info",
+        "🎚️ Smart Tap Accuracy Mode",
+        "🧽 Remove Duplicate Taps",
+        "✂️ Trim First Idle Wait",
+        "🧯 Repair Macro Data",
+        "📌 Long Press Last Tap",
+        "📐 Re-anchor Tap Percent",
+        "🧭 Normalize Swipe Paths",
+        "🧲 Edge Safe Clamp",
+        "👆 Double Tap Last Tap",
+        "🐢 Slow Down Macro"
+    )
+
+    val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        .setTitle("Smart Tools • $active")
+        .setItems(items) { _, which ->
+            when (which) {
+                0 -> showNumberInputDialog(
+                    title = "Last click kitni baar extra repeat ho?",
+                    hint = "Example: 10",
+                    defaultValue = 5,
+                    min = 1,
+                    max = 100
+                ) { repeatCount ->
+                    showNumberInputDialog(
+                        title = "Repeat gap milliseconds me?",
+                        hint = "Example: 120",
+                        defaultValue = 120,
+                        min = 40,
+                        max = 5000
+                    ) { gapMs ->
+                        addBurstRepeatsToActiveConfig(repeatCount, gapMs.toLong())
+                    }
+                }
+
+                1 -> showNumberInputDialog(
+                    title = "Start se pehle safe delay ms?",
+                    hint = "Example: 700",
+                    defaultValue = 700,
+                    min = 100,
+                    max = 10000
+                ) { delayMs ->
+                    insertSafeStartDelayToActiveConfig(delayMs.toLong())
+                }
+
+                2 -> showNumberInputDialog(
+                    title = "Maximum wait gap ms?",
+                    hint = "Example: 2000",
+                    defaultValue = 2000,
+                    min = 100,
+                    max = 60000
+                ) { maxGapMs ->
+                    smoothActiveRecordingGaps(maxGapMs.toLong())
+                }
+
+                3 -> showNumberInputDialog(
+                    title = "Tap duration ms stable kitna rakhein?",
+                    hint = "Example: 80",
+                    defaultValue = 80,
+                    min = 50,
+                    max = 350
+                ) { durationMs ->
+                    stabilizeTapJitterForActiveConfig(durationMs.toLong())
+                }
+
+                4 -> showNumberInputDialog(
+                    title = "Speed percent? 70 = faster, 100 = same",
+                    hint = "Example: 70",
+                    defaultValue = 70,
+                    min = 20,
+                    max = 100
+                ) { percent ->
+                    speedUpActiveRecording(percent)
+                }
+
+                5 -> showNumberInputDialog(
+                    title = "Minimum gap between steps ms?",
+                    hint = "Example: 180",
+                    defaultValue = 180,
+                    min = 40,
+                    max = 5000
+                ) { minGapMs ->
+                    addMinimumGapToActiveConfig(minGapMs.toLong())
+                }
+
+                6 -> optimizeActiveMacroForReliability()
+                7 -> showActiveMacroInfoDialog()
+                8 -> showTapAccuracyModeDialog()
+                9 -> removeDuplicateTapsFromActiveConfig()
+                10 -> showNumberInputDialog(
+                    title = "First wait ko maximum kitna rakhein ms?",
+                    hint = "Example: 250",
+                    defaultValue = 250,
+                    min = 0,
+                    max = 10000
+                ) { maxStartDelay ->
+                    trimFirstIdleWaitForActiveConfig(maxStartDelay.toLong())
+                }
+
+                11 -> repairActiveMacroData()
+
+                12 -> showNumberInputDialog(
+                    title = "Last tap ko long press kitna ms banayein?",
+                    hint = "Example: 900",
+                    defaultValue = 900,
+                    min = 450,
+                    max = 5000
+                ) { durationMs ->
+                    setLastTapLongPress(durationMs.toLong())
+                }
+
+                13 -> reanchorActiveMacroToCurrentScreen()
+                14 -> normalizeActiveSwipePaths()
+                15 -> edgeSafeClampActiveMacro()
+                16 -> doubleTapLastTapInActiveConfig()
+                17 -> showNumberInputDialog(
+                    title = "Macro ko slow kitna karna hai? 150 = 1.5x slow",
+                    hint = "Example: 150",
+                    defaultValue = 150,
+                    min = 110,
+                    max = 500
+                ) { percent ->
+                    slowDownActiveRecording(percent)
+                }
+            }
+        }
+        .create()
+
+    showOverlayDialogSafely(dialog)
+}
+
+private fun gestureDurationMs(gesture: RecordedGesture): Long {
+    return (gesture.points.maxOfOrNull { it.t.coerceAtLeast(0L) } ?: 80L)
+        .coerceIn(50L, 60000L)
+}
+
+private fun gestureEndMs(gesture: RecordedGesture): Long {
+    return gesture.delayFromStart.coerceAtLeast(0L) + gestureDurationMs(gesture)
+}
+
+private fun cloneGestureAtDelay(gesture: RecordedGesture, delayMs: Long): RecordedGesture {
+    return gesture.copy(
+        delayFromStart = delayMs.coerceAtLeast(0L).coerceAtMost(24L * 60L * 60L * 1000L),
+        points = gesture.points.map { it.copy(t = it.t.coerceAtLeast(0L).coerceAtMost(60000L)) }
+    )
+}
+
+private fun finishSmartToolEdit(message: String) {
+    unsavedGestures = emptyList()
+    glassHiddenAt = 0L
+    nextNavigationGapOverride = null
+    pendingDiscardConfirm = false
+
+    val hasSaved = GestureStore.hasRecording(this)
+    updateUIState(if (hasSaved) "PLAY" else "START", false, hasSaved, true)
+    restorePanelUI()
+    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+}
+
+private fun addBurstRepeatsToActiveConfig(repeatCount: Int, gapMs: Long) {
+    val saved = GestureStore.load(this)
+        .filter { it.points.isNotEmpty() }
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+
+    val last = saved.lastOrNull { !isSystemRecordedGesture(it) }
+    if (last == null) {
+        Toast.makeText(this, "Repeat ke liye saved click nahi mila", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    val count = repeatCount.coerceIn(1, 100)
+    val gap = gapMs.coerceIn(40L, 5000L)
+    val lastDuration = gestureDurationMs(last)
+    val extra = mutableListOf<RecordedGesture>()
+    var nextDelay = gestureEndMs(last) + gap
+
+    repeat(count) {
+        extra.add(cloneGestureAtDelay(last, nextDelay))
+        nextDelay += lastDuration + gap
+    }
+
+    val merged = (saved + extra)
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+        .take(1200)
+
+    if (GestureStore.save(this, merged)) {
+        finishSmartToolEdit("⚡ Burst added: last click +$count repeats")
+    } else {
+        Toast.makeText(this, "Burst save nahi ho paya", Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun insertSafeStartDelayToActiveConfig(delayMs: Long) {
+    val delay = delayMs.coerceIn(100L, 10000L)
+    val saved = GestureStore.load(this)
+        .filter { it.points.isNotEmpty() }
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+
+    if (saved.isEmpty()) {
+        Toast.makeText(this, "Delay ke liye saved macro nahi mila", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    val edited = saved.map { gesture ->
+        cloneGestureAtDelay(gesture, gesture.delayFromStart.coerceAtLeast(0L) + delay)
+    }
+
+    if (GestureStore.save(this, edited)) {
+        finishSmartToolEdit("⏳ Start delay added: ${delay}ms")
+    } else {
+        Toast.makeText(this, "Start delay save nahi hua", Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun smoothActiveRecordingGaps(maxGapMs: Long) {
+    val limit = maxGapMs.coerceIn(100L, 60000L)
+    val saved = GestureStore.load(this)
+        .filter { it.points.isNotEmpty() }
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+
+    if (saved.isEmpty()) {
+        Toast.makeText(this, "Smooth karne ke liye saved macro nahi mila", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    var cursor = 0L
+    val edited = saved.map { gesture ->
+        val rawDelay = gesture.delayFromStart.coerceAtLeast(0L)
+        val rawGap = (rawDelay - cursor).coerceAtLeast(0L)
+        val newDelay = cursor + rawGap.coerceAtMost(limit)
+        val cloned = cloneGestureAtDelay(gesture, newDelay)
+        cursor = gestureEndMs(cloned)
+        cloned
+    }
+
+    if (GestureStore.save(this, edited)) {
+        finishSmartToolEdit("🧹 Long waits smooth ho gaye: max ${limit}ms")
+    } else {
+        Toast.makeText(this, "Smooth timing save nahi hui", Toast.LENGTH_LONG).show()
+    }
+}
+
+// AARISH_SMART_TOOLS_V2: macro-quality tools that edit saved commands safely offline.
+private fun isSystemRecordedGesture(gesture: RecordedGesture): Boolean {
+    val firstX = gesture.points.firstOrNull()?.x ?: return false
+    return firstX <= -50f ||
+        gesture.targetText == "GLOBAL_BACK" ||
+        gesture.targetText == "GLOBAL_RECENTS"
+}
+
+private fun localGestureHasRealMovement(gesture: RecordedGesture): Boolean {
+    val points = gesture.points
+    if (points.size <= 1) return false
+    val first = points.first()
+    val slop = kotlin.math.max(10f, 6f * resources.displayMetrics.density)
+    return points.any { point ->
+        abs(point.x - first.x) > slop || abs(point.y - first.y) > slop
+    }
+}
+
+private fun stabilizeTapJitterForActiveConfig(durationMs: Long) {
+    val duration = durationMs.coerceIn(50L, 350L)
+    val saved = GestureStore.load(this)
+        .filter { it.points.isNotEmpty() }
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+
+    if (saved.isEmpty()) {
+        Toast.makeText(this, "Stable karne ke liye saved macro nahi mila", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    val edited = saved.map { gesture ->
+        if (isSystemRecordedGesture(gesture) || localGestureHasRealMovement(gesture) || gestureDurationMs(gesture) >= 450L) {
+            gesture
+        } else {
+            val first = gesture.points.first()
+            gesture.copy(
+                points = listOf(
+                    first.copy(t = 0L),
+                    first.copy(t = duration)
+                )
+            )
+        }
+    }
+
+    if (GestureStore.save(this, edited)) {
+        finishSmartToolEdit("🎯 Tap jitter stable ho gaya: ${duration}ms")
+    } else {
+        Toast.makeText(this, "Tap stable save nahi hua", Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun speedUpActiveRecording(speedPercent: Int) {
+    val percent = speedPercent.coerceIn(20, 100)
+    val factor = percent / 100.0
+    val saved = GestureStore.load(this)
+        .filter { it.points.isNotEmpty() }
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+
+    if (saved.isEmpty()) {
+        Toast.makeText(this, "Speed ke liye saved macro nahi mila", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    var oldCursor = 0L
+    var newCursor = 0L
+    val edited = saved.map { gesture ->
+        val rawDelay = gesture.delayFromStart.coerceAtLeast(0L)
+        val rawGap = (rawDelay - oldCursor).coerceAtLeast(0L)
+        val newDelay = newCursor + (rawGap * factor).toLong().coerceAtLeast(0L)
+        val newPoints = gesture.points
+            .sortedBy { it.t.coerceAtLeast(0L) }
+            .map { point ->
+                point.copy(t = (point.t.coerceAtLeast(0L) * factor).toLong().coerceAtLeast(0L).coerceAtMost(60000L))
+            }
+        val cloned = gesture.copy(delayFromStart = newDelay.coerceAtMost(24L * 60L * 60L * 1000L), points = newPoints)
+        oldCursor = gestureEndMs(gesture)
+        newCursor = gestureEndMs(cloned)
+        cloned
+    }
+
+    if (GestureStore.save(this, edited)) {
+        finishSmartToolEdit("🚀 Macro speed set: ${percent}% timing")
+    } else {
+        Toast.makeText(this, "Speed edit save nahi hui", Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun addMinimumGapToActiveConfig(minGapMs: Long) {
+    val gap = minGapMs.coerceIn(40L, 5000L)
+    val saved = GestureStore.load(this)
+        .filter { it.points.isNotEmpty() }
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+
+    if (saved.isEmpty()) {
+        Toast.makeText(this, "Gap ke liye saved macro nahi mila", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    var cursor = 0L
+    val edited = saved.mapIndexed { index, gesture ->
+        val rawDelay = gesture.delayFromStart.coerceAtLeast(0L)
+        val safeDelay = if (index == 0) rawDelay else kotlin.math.max(rawDelay, cursor + gap)
+        val cloned = cloneGestureAtDelay(gesture, safeDelay)
+        cursor = gestureEndMs(cloned)
+        cloned
+    }
+
+    if (GestureStore.save(this, edited)) {
+        finishSmartToolEdit("🛡️ Minimum gap set: ${gap}ms")
+    } else {
+        Toast.makeText(this, "Minimum gap save nahi hua", Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun optimizeActiveMacroForReliability() {
+    val saved = GestureStore.load(this)
+        .filter { it.points.isNotEmpty() }
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+
+    if (saved.isEmpty()) {
+        Toast.makeText(this, "Optimize ke liye saved macro nahi mila", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    val firstStartDelay = saved.firstOrNull()?.delayFromStart?.coerceAtLeast(0L) ?: 0L
+    val startShift = (firstStartDelay - 250L).coerceAtLeast(0L)
+
+    var cursor = 0L
+    val edited = saved.mapIndexed { index, gesture ->
+        val rawDelay = (gesture.delayFromStart.coerceAtLeast(0L) - startShift).coerceAtLeast(0L)
+        val minGap = if (index == 0) 0L else 140L
+        val safeDelay = (if (index == 0) rawDelay else kotlin.math.max(rawDelay, cursor + minGap))
+            .coerceAtMost(24L * 60L * 60L * 1000L)
+
+        val cleanPoints = gesture.points
+            .filter { !it.x.isNaN() && !it.x.isInfinite() && !it.y.isNaN() && !it.y.isInfinite() }
+            .sortedBy { it.t.coerceAtLeast(0L) }
+            .map { it.copy(t = it.t.coerceAtLeast(0L).coerceAtMost(60000L)) }
+
+        val finalPoints = if (
+            !isSystemRecordedGesture(gesture) &&
+            cleanPoints.isNotEmpty() &&
+            !localGestureHasRealMovement(gesture.copy(points = cleanPoints)) &&
+            gestureDurationMs(gesture.copy(points = cleanPoints)) < 450L
+        ) {
+            val first = cleanPoints.first()
+            listOf(first.copy(t = 0L), first.copy(t = 90L))
+        } else {
+            cleanPoints.ifEmpty { gesture.points }
+        }
+
+        val cloned = gesture.copy(delayFromStart = safeDelay, points = finalPoints)
+        cursor = gestureEndMs(cloned)
+        cloned
+    }.take(1200)
+
+    if (GestureStore.save(this, edited)) {
+        finishSmartToolEdit("🧠 Macro optimized: stable taps + safe gaps + trim start")
+    } else {
+        Toast.makeText(this, "Optimize save nahi hua", Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun showActiveMacroInfoDialog() {
+    val active = GestureStore.getActiveConfigName(this)
+    val saved = GestureStore.load(this).sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+    val durationMs = saved.maxOfOrNull { gestureEndMs(it) } ?: 0L
+    val chain = GestureStore.getWorkflowSummary(this, active)
+    val mode = GestureStore.getLoopModeForConfig(this, active)
+    val loopValue = GestureStore.getLoopValueForConfig(this, active)
+    val loopText = when (mode) {
+        "COUNT" -> "${loopValue}x"
+        "INFINITE" -> "Infinity"
+        "TIME" -> "${loopValue} minutes"
+        else -> "Once"
+    }
+    val tapMode = GestureStore.getTapAccuracyModeLabel(this)
+
+    val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        .setTitle("Macro Info")
+        .setMessage(
+            "Config: $active\n" +
+                "Steps: ${saved.size}\n" +
+                "Duration: ${(durationMs + 999L) / 1000L}s\n" +
+                "Loop: $loopText\n" +
+                "Smart Tap: $tapMode\n" +
+                "Workflow: $chain"
+        )
+        .setPositiveButton("OK", null)
+        .create()
+
+    showOverlayDialogSafely(dialog)
+}
+
+
+private fun showTapAccuracyModeDialog() {
+    if (isRecording || AutoActionService.isPlaying() || unsavedGestures.isNotEmpty()) {
+        Toast.makeText(this, "Recording/Play/Unsaved edit ke time accuracy mode change nahi kar sakte", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    val modes = arrayOf("BALANCED", "STRICT", "RELAXED")
+    val labels = arrayOf(
+        "⚖️ Balanced • recommended",
+        "🛡️ Strict • wrong tap se zyada protection",
+        "⚡ Relaxed • dynamic UI par zyada fallback"
+    )
+    val current = GestureStore.getTapAccuracyMode(this)
+    val checked = modes.indexOf(current).takeIf { it >= 0 } ?: 0
+
+    val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        .setTitle("Smart Tap Accuracy")
+        .setSingleChoiceItems(labels, checked) { popup, which ->
+            GestureStore.saveTapAccuracyMode(this, modes[which])
+            Toast.makeText(
+                this,
+                "Smart Tap: ${GestureStore.getTapAccuracyModeLabel(this)}",
+                Toast.LENGTH_SHORT
+            ).show()
+            popup.dismiss()
+        }
+        .setNegativeButton("Cancel", null)
+        .create()
+
+    showOverlayDialogSafely(dialog)
+}
+
+
+private fun removeDuplicateTapsFromActiveConfig() {
+    val saved = GestureStore.load(this)
+        .filter { it.points.isNotEmpty() }
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+
+    if (saved.isEmpty()) {
+        Toast.makeText(this, "Duplicate clean ke liye saved macro nahi mila", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    val slop = kotlin.math.max(8f, 5f * resources.displayMetrics.density)
+    val maxDuplicateGap = 120L
+    val edited = mutableListOf<RecordedGesture>()
+    var removed = 0
+
+    for (gesture in saved) {
+        val previous = edited.lastOrNull()
+        val duplicateTap = if (previous != null) {
+            val gPoint = gesture.points.firstOrNull()
+            val pPoint = previous.points.firstOrNull()
+            val gap = gesture.delayFromStart.coerceAtLeast(0L) - gestureEndMs(previous)
+
+            gPoint != null &&
+                pPoint != null &&
+                !isSystemRecordedGesture(gesture) &&
+                !isSystemRecordedGesture(previous) &&
+                !localGestureHasRealMovement(gesture) &&
+                !localGestureHasRealMovement(previous) &&
+                abs(gPoint.x - pPoint.x) <= slop &&
+                abs(gPoint.y - pPoint.y) <= slop &&
+                gap in 0L..maxDuplicateGap
+        } else {
+            false
+        }
+
+        if (duplicateTap) {
+            removed++
+        } else {
+            edited.add(gesture)
+        }
+    }
+
+    if (removed == 0) {
+        Toast.makeText(this, "🧽 Duplicate taps nahi mile", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    if (GestureStore.save(this, edited)) {
+        finishSmartToolEdit("🧽 Duplicate taps removed: $removed")
+    } else {
+        Toast.makeText(this, "Duplicate clean save nahi hua", Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun trimFirstIdleWaitForActiveConfig(maxStartDelayMs: Long) {
+    val maxStartDelay = maxStartDelayMs.coerceIn(0L, 10000L)
+    val saved = GestureStore.load(this)
+        .filter { it.points.isNotEmpty() }
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+
+    if (saved.isEmpty()) {
+        Toast.makeText(this, "Trim ke liye saved macro nahi mila", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    val firstDelay = saved.first().delayFromStart.coerceAtLeast(0L)
+    val shift = (firstDelay - maxStartDelay).coerceAtLeast(0L)
+
+    if (shift <= 0L) {
+        Toast.makeText(this, "✂️ First wait already safe hai", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    val edited = saved.map { gesture ->
+        cloneGestureAtDelay(gesture, gesture.delayFromStart.coerceAtLeast(0L) - shift)
+    }
+
+    if (GestureStore.save(this, edited)) {
+        finishSmartToolEdit("✂️ First idle wait trimmed: -${shift}ms")
+    } else {
+        Toast.makeText(this, "First wait trim save nahi hua", Toast.LENGTH_LONG).show()
+    }
+}
+
+
+// AARISH_SMART_TOOLS_V3: saved-macro repair + long-press + screen-anchor tools.
+private fun cleanToolPoints(gesture: RecordedGesture): List<GesturePoint> {
+    if (gesture.points.isEmpty()) return emptyList()
+    if (isSystemRecordedGesture(gesture)) {
+        return gesture.points
+            .sortedBy { it.t.coerceAtLeast(0L) }
+            .take(2)
+            .map { it.copy(t = it.t.coerceAtLeast(0L).coerceAtMost(1000L)) }
+    }
+
+    val screenW = (resources.displayMetrics.widthPixels.toFloat() - 2f).coerceAtLeast(2f)
+    val screenH = (resources.displayMetrics.heightPixels.toFloat() - 2f).coerceAtLeast(2f)
+    val orderedToolPoints = gesture.points
+        .filter { !it.x.isNaN() && !it.x.isInfinite() && !it.y.isNaN() && !it.y.isInfinite() }
+        .sortedBy { it.t.coerceAtLeast(0L) }
+    val baseT = orderedToolPoints.firstOrNull()?.t?.coerceAtLeast(0L) ?: 0L
+
+    // AARISH_TOOL_POINT_TIME_NORMALIZE_V1: repair/tools ke baad har gesture ka local t 0 se chale.
+    return orderedToolPoints.map { point ->
+        point.copy(
+            x = point.x.coerceIn(2f, screenW),
+            y = point.y.coerceIn(2f, screenH),
+            t = (point.t.coerceAtLeast(0L) - baseT).coerceAtLeast(0L).coerceAtMost(60000L)
+        )
+    }
+}
+
+private fun repairActiveMacroData() {
+    val saved = GestureStore.load(this)
+        .filter { it.points.isNotEmpty() }
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+
+    if (saved.isEmpty()) {
+        Toast.makeText(this, "Repair ke liye saved macro nahi mila", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    var cursor = 0L
+    var repaired = 0
+    val edited = saved.mapNotNull { gesture ->
+        val cleanPoints = cleanToolPoints(gesture)
+        if (cleanPoints.isEmpty()) {
+            repaired++
+            null
+        } else {
+            val safeDelay = gesture.delayFromStart.coerceAtLeast(cursor).coerceAtMost(24L * 60L * 60L * 1000L)
+            val fixed = gesture.copy(delayFromStart = safeDelay, points = cleanPoints)
+            if (fixed != gesture) repaired++
+            cursor = gestureEndMs(fixed)
+            fixed
+        }
+    }.take(1200)
+
+    if (edited.isEmpty()) {
+        Toast.makeText(this, "Repair ke baad valid step nahi bacha", Toast.LENGTH_LONG).show()
+        return
+    }
+
+    if (GestureStore.save(this, edited)) {
+        finishSmartToolEdit("🧯 Macro repaired: $repaired fixes")
+    } else {
+        Toast.makeText(this, "Repair save nahi hua", Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun setLastTapLongPress(durationMs: Long) {
+    val duration = durationMs.coerceIn(450L, 5000L)
+    val saved = GestureStore.load(this)
+        .filter { it.points.isNotEmpty() }
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+        .toMutableList()
+
+    if (saved.isEmpty()) {
+        Toast.makeText(this, "Long press ke liye saved macro nahi mila", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    val index = saved.indexOfLast { gesture ->
+        !isSystemRecordedGesture(gesture) && !localGestureHasRealMovement(gesture)
+    }
+
+    if (index < 0) {
+        Toast.makeText(this, "Long press banane ke liye tap step nahi mila", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    val gesture = saved[index]
+    val first = cleanToolPoints(gesture).firstOrNull() ?: gesture.points.first()
+    saved[index] = gesture.copy(points = listOf(first.copy(t = 0L), first.copy(t = duration)))
+
+    if (GestureStore.save(this, saved)) {
+        finishSmartToolEdit("📌 Last tap long press: ${duration}ms")
+    } else {
+        Toast.makeText(this, "Long press save nahi hua", Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun reanchorActiveMacroToCurrentScreen() {
+    val screenW = resources.displayMetrics.widthPixels.coerceAtLeast(1)
+    val screenH = resources.displayMetrics.heightPixels.coerceAtLeast(1)
+    val saved = GestureStore.load(this)
+        .filter { it.points.isNotEmpty() }
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+
+    if (saved.isEmpty()) {
+        Toast.makeText(this, "Re-anchor ke liye saved macro nahi mila", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    val edited = saved.map { gesture ->
+        if (isSystemRecordedGesture(gesture)) {
+            gesture
+        } else {
+            val first = cleanToolPoints(gesture).firstOrNull() ?: gesture.points.first()
+            gesture.copy(
+                xPercent = (first.x / screenW.toFloat()).coerceIn(0f, 1f),
+                yPercent = (first.y / screenH.toFloat()).coerceIn(0f, 1f),
+                recordedScreenW = screenW,
+                recordedScreenH = screenH
+            )
+        }
+    }
+
+    if (GestureStore.save(this, edited)) {
+        finishSmartToolEdit("📐 Tap percent anchors refreshed")
+    } else {
+        Toast.makeText(this, "Re-anchor save nahi hua", Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun normalizeActiveSwipePaths() {
+    val saved = GestureStore.load(this)
+        .filter { it.points.isNotEmpty() }
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+
+    if (saved.isEmpty()) {
+        Toast.makeText(this, "Swipe normalize ke liye saved macro nahi mila", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    var changed = 0
+    val edited = saved.map { gesture ->
+        val cleaned = cleanToolPoints(gesture)
+        if (cleaned.isEmpty() || !localGestureHasRealMovement(gesture.copy(points = cleaned))) {
+            gesture.copy(points = cleaned.ifEmpty { gesture.points })
+        } else {
+            val maxPoints = 220
+            val step = if (cleaned.size > maxPoints) kotlin.math.max(1, cleaned.size / maxPoints) else 1
+            val sampled = cleaned
+                .filterIndexed { index, _ -> index == 0 || index == cleaned.lastIndex || index % step == 0 }
+                .fold(mutableListOf<GesturePoint>()) { acc, point ->
+                    val safeT = if (acc.isEmpty()) 0L else point.t.coerceAtLeast(acc.last().t + 12L).coerceAtMost(60000L)
+                    acc.add(point.copy(t = safeT))
+                    acc
+                }
+            if (sampled != gesture.points) changed++
+            gesture.copy(points = sampled)
+        }
+    }
+
+    if (GestureStore.save(this, edited)) {
+        finishSmartToolEdit("🧭 Swipe paths normalized: $changed")
+    } else {
+        Toast.makeText(this, "Swipe normalize save nahi hua", Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun edgeSafeClampActiveMacro() {
+    val screenW = resources.displayMetrics.widthPixels.coerceAtLeast(1)
+    val screenH = resources.displayMetrics.heightPixels.coerceAtLeast(1)
+    val marginX = dp(6).toFloat()
+    val topMargin = dp(18).toFloat()
+    val bottomMargin = dp(18).toFloat()
+
+    val saved = GestureStore.load(this)
+        .filter { it.points.isNotEmpty() }
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+
+    if (saved.isEmpty()) {
+        Toast.makeText(this, "Edge clamp ke liye saved macro nahi mila", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    var changed = 0
+    val maxX = (screenW.toFloat() - marginX).coerceAtLeast(marginX)
+    val maxY = (screenH.toFloat() - bottomMargin).coerceAtLeast(topMargin)
+
+    val edited = saved.map { gesture ->
+        if (isSystemRecordedGesture(gesture)) {
+            gesture
+        } else {
+            val fixedPoints = gesture.points.map { point ->
+                val rawX = if (point.x.isNaN() || point.x.isInfinite()) marginX else point.x
+                val rawY = if (point.y.isNaN() || point.y.isInfinite()) topMargin else point.y
+                val nx = rawX.coerceIn(marginX, maxX)
+                val ny = rawY.coerceIn(topMargin, maxY)
+                if (nx != point.x || ny != point.y) changed++
+                point.copy(x = nx, y = ny, t = point.t.coerceAtLeast(0L).coerceAtMost(60000L))
+            }
+
+            val first = fixedPoints.firstOrNull()
+            if (first == null) {
+                gesture
+            } else {
+                gesture.copy(
+                    points = fixedPoints,
+                    xPercent = (first.x / screenW.toFloat()).coerceIn(0f, 1f),
+                    yPercent = (first.y / screenH.toFloat()).coerceIn(0f, 1f),
+                    recordedScreenW = screenW,
+                    recordedScreenH = screenH
+                )
+            }
+        }
+    }
+
+    if (changed == 0) {
+        Toast.makeText(this, "🧲 Edge taps already safe hain", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    if (GestureStore.save(this, edited)) {
+        finishSmartToolEdit("🧲 Edge safe clamp applied: $changed point fixes")
+    } else {
+        Toast.makeText(this, "Edge clamp save nahi hua", Toast.LENGTH_LONG).show()
+    }
+}
+
+
+// AARISH_DOUBLE_SLOW_TOOLS_V1: more offline autoclicker click-types without changing full UI.
+private fun doubleTapLastTapInActiveConfig() {
+    val saved = GestureStore.load(this)
+        .filter { it.points.isNotEmpty() }
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+
+    if (saved.isEmpty()) {
+        Toast.makeText(this, "Double tap ke liye saved macro nahi mila", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    val lastTap = saved.lastOrNull { gesture ->
+        !isSystemRecordedGesture(gesture) &&
+            !localGestureHasRealMovement(gesture) &&
+            gestureDurationMs(gesture) < 450L
+    }
+
+    if (lastTap == null) {
+        Toast.makeText(this, "Double tap banane ke liye normal tap step nahi mila", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    val first = cleanToolPoints(lastTap).firstOrNull() ?: lastTap.points.first()
+    val screenW = resources.displayMetrics.widthPixels.coerceAtLeast(1)
+    val screenH = resources.displayMetrics.heightPixels.coerceAtLeast(1)
+    val tapDuration = 85L
+    val duplicateDelay = ((saved.maxOfOrNull { gestureEndMs(it) } ?: gestureEndMs(lastTap)) + 95L)
+        .coerceAtMost(24L * 60L * 60L * 1000L)
+
+    val duplicate = lastTap.copy(
+        delayFromStart = duplicateDelay,
+        points = listOf(first.copy(t = 0L), first.copy(t = tapDuration)),
+        xPercent = (first.x / screenW.toFloat()).coerceIn(0f, 1f),
+        yPercent = (first.y / screenH.toFloat()).coerceIn(0f, 1f),
+        recordedScreenW = screenW,
+        recordedScreenH = screenH
+    )
+
+    val edited = (saved + duplicate)
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+        .take(1200)
+
+    if (GestureStore.save(this, edited)) {
+        finishSmartToolEdit("👆 Double tap added at macro end")
+    } else {
+        Toast.makeText(this, "Double tap save nahi hua", Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun slowDownActiveRecording(slowPercent: Int) {
+    val percent = slowPercent.coerceIn(110, 500)
+    val factor = percent / 100.0
+    val saved = GestureStore.load(this)
+        .filter { it.points.isNotEmpty() }
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+
+    if (saved.isEmpty()) {
+        Toast.makeText(this, "Slow down ke liye saved macro nahi mila", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    var oldCursor = 0L
+    var newCursor = 0L
+    val edited = saved.map { gesture ->
+        val rawDelay = gesture.delayFromStart.coerceAtLeast(0L)
+        val rawGap = (rawDelay - oldCursor).coerceAtLeast(0L)
+        val newDelay = (newCursor + (rawGap * factor).toLong().coerceAtLeast(0L))
+            .coerceAtMost(24L * 60L * 60L * 1000L)
+        val ordered = gesture.points
+            .filter { !it.x.isNaN() && !it.x.isInfinite() && !it.y.isNaN() && !it.y.isInfinite() }
+            .sortedBy { it.t.coerceAtLeast(0L) }
+        val baseT = ordered.firstOrNull()?.t?.coerceAtLeast(0L) ?: 0L
+        val newPoints = ordered.map { point ->
+            point.copy(t = (((point.t.coerceAtLeast(0L) - baseT) * factor).toLong()).coerceAtLeast(0L).coerceAtMost(60000L))
+        }.ifEmpty { gesture.points }
+
+        val cloned = gesture.copy(delayFromStart = newDelay, points = newPoints)
+        oldCursor = gestureEndMs(gesture)
+        newCursor = gestureEndMs(cloned)
+        cloned
+    }
+
+    if (GestureStore.save(this, edited)) {
+        finishSmartToolEdit("🐢 Macro slowed: ${percent}% timing")
+    } else {
+        Toast.makeText(this, "Slow down save nahi hua", Toast.LENGTH_LONG).show()
+    }
+}
 
 private fun showWorkflowHubDialog() {
         if (isRecording || AutoActionService.isPlaying() || unsavedGestures.isNotEmpty()) {
@@ -497,12 +1550,13 @@ private fun showSelectStartConfigForWorkflowDialog() {
         .setItems(configs.toTypedArray()) { _, which ->
             val startConfig = configs[which]
 
-            GestureStore.setNextConfig(this, startConfig, null)
+            GestureStore.clearChainFrom(this, startConfig)
             GestureStore.setActiveConfigName(this, startConfig)
 
             refreshConfigLabel()
             if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
             if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
+            restorePanelUI()
 
             showSelectNextConfigForWorkflowDialog(
                 currentConfig = startConfig,
@@ -553,14 +1607,15 @@ private fun showSelectStartConfigForWorkflowDialog() {
             val row = super.getView(position, convertView, parent)
             row.findViewById<android.widget.TextView>(android.R.id.text1)?.apply {
                 textSize = 20f
-                setPadding(18, 16, 18, 16)
+                setPadding(dp(18), dp(14), dp(18), dp(14))
                 if (position == 0) {
                     setTextColor(android.graphics.Color.rgb(220, 38, 38))
                     setTypeface(typeface, android.graphics.Typeface.BOLD)
                 } else {
-                    setTextColor(android.graphics.Color.WHITE)
+                    setTextColor(android.graphics.Color.rgb(15, 23, 42))
                     setTypeface(null, android.graphics.Typeface.NORMAL)
                 }
+                row.setBackgroundColor(android.graphics.Color.rgb(248, 250, 252))
             }
             return row
         }
@@ -764,26 +1819,31 @@ private fun showLoopSettingsDialog() {
         val input = android.widget.EditText(this).apply {
             setSingleLine(true)
             this.hint = hint
-            setText(defaultValue.toString())
+            setText(defaultValue.coerceIn(min, max).toString())
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
             selectAll()
+            setPadding(dp(18), dp(12), dp(18), dp(12))
         }
 
         val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle(title)
             .setView(input)
-            .setPositiveButton("Save") { _, _ ->
-                val value = input.text?.toString()?.trim()?.toIntOrNull()
-                if (value == null || value !in min..max) {
-                    Toast.makeText(this, "Valid number $min se $max ke beech do", Toast.LENGTH_LONG).show()
-                } else {
-                    onOk(value)
-                }
-            }
+            .setPositiveButton("Save", null)
             .setNegativeButton("Cancel", null)
             .create()
 
         showOverlayDialogSafely(dialog)
+
+        dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
+            val value = input.text?.toString()?.trim()?.toIntOrNull()
+            if (value == null || value !in min..max) {
+                Toast.makeText(this, "Valid number $min se $max ke beech do", Toast.LENGTH_LONG).show()
+                input.requestFocus()
+            } else {
+                onOk(value)
+                dialog.dismiss()
+            }
+        }
     }
 
     private fun showWorkflowPreviewDialog() {
@@ -899,43 +1959,49 @@ private fun showLoopSettingsDialog() {
         val input = android.widget.EditText(this).apply {
             hint = "New Config Name"
             setSingleLine(true)
+            setPadding(dp(18), dp(12), dp(18), dp(12))
         }
 
         val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle("Create Config Block")
             .setView(input)
-            .setPositiveButton("Create") { _, _ ->
-                val name = input.text?.toString()
-                    ?.replace(Regex("[\\r\\n\\t]+"), " ")
-                    ?.replace(Regex("\\s+"), " ")
-                    ?.trim()
-                    ?.take(40)
-                    .orEmpty()
-
-                if (name.isBlank()) {
-                    Toast.makeText(this, "Config name empty nahi ho sakta", Toast.LENGTH_SHORT).show()
-                    return@setPositiveButton
-                }
-
-                GestureStore.setActiveConfigName(this, name)
-                refreshConfigLabel()
-                if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
-                if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
-
-                unsavedGestures = emptyList()
-                glassHiddenAt = 0L
-                nextNavigationGapOverride = null
-                pendingDiscardConfirm = false
-
-                updateUIState("START", false, false, true)
-                restorePanelUI()
-
-                Toast.makeText(this, "Created: $name", Toast.LENGTH_SHORT).show()
-            }
+            .setPositiveButton("Create", null)
             .setNegativeButton("Cancel", null)
             .create()
 
         showOverlayDialogSafely(dialog)
+
+        dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
+            val name = input.text?.toString()
+                ?.replace(Regex("[\r\n\t]+"), " ")
+                ?.replace(Regex("\\s+"), " ")
+                ?.replace(Regex("[^\\p{L}\\p{N} _.-]+"), "")
+                ?.trim()
+                ?.take(40)
+                .orEmpty()
+
+            if (name.isBlank()) {
+                Toast.makeText(this, "Config name empty nahi ho sakta", Toast.LENGTH_SHORT).show()
+                input.requestFocus()
+                return@setOnClickListener
+            }
+
+            GestureStore.setActiveConfigName(this, name)
+            refreshConfigLabel()
+            if (::btnLoop.isInitialized) updateLoopButtonText(btnLoop)
+            if (::btnWorkflow.isInitialized) updateWorkflowButtonUI()
+
+            unsavedGestures = emptyList()
+            glassHiddenAt = 0L
+            nextNavigationGapOverride = null
+            pendingDiscardConfirm = false
+
+            updateUIState("START", false, false, true)
+            restorePanelUI()
+
+            Toast.makeText(this, "Ready: $name", Toast.LENGTH_SHORT).show()
+            dialog.dismiss()
+        }
     }
 
 
@@ -946,7 +2012,10 @@ private fun showLoopSettingsDialog() {
         if ((unsavedGestures.isNotEmpty() || hasLiveRecording) && !pendingDiscardConfirm) {
             pendingDiscardConfirm = true
             Toast.makeText(this, "Unsaved recording hai! Discard karne ke liye dobara CUT dabao.", Toast.LENGTH_LONG).show()
-            handler.postDelayed({ pendingDiscardConfirm = false }, 5000L)
+            // AARISH_DISCARD_CONFIRM_GUARD_V1: stale delayed callback destroyed service par state change na kare.
+        handler.postDelayed({
+            if (instance === this@FloatingControlService) pendingDiscardConfirm = false
+        }, 5000L)
             return
         }
 
@@ -975,7 +2044,7 @@ private fun showLoopSettingsDialog() {
         var initialTouchX = 0f
         var initialTouchY = 0f
         var isDragging = false
-        val dragSlop = 10f
+        val dragSlop = dp(10).toFloat()
 
         dragHandle.setOnTouchListener { _, event ->
             when (event.actionMasked) {
@@ -1035,6 +2104,13 @@ private fun showLoopSettingsDialog() {
 
     private fun safeAddView(view: View, params: WindowManager.LayoutParams, errorMessage: String): Boolean {
         return try {
+            if (view.parent != null) {
+                try {
+                    windowManager.removeViewImmediate(view)
+                } catch (_: Exception) {
+                    try { windowManager.removeView(view) } catch (_: Exception) {}
+                }
+            }
             windowManager.addView(view, params)
             true
         } catch (e: Exception) {
@@ -1052,11 +2128,33 @@ private fun showLoopSettingsDialog() {
     private fun safeRemoveView(view: View?) {
         if (view == null) return
         try {
-            windowManager.removeView(view)
-        } catch (_: Exception) {}
+            windowManager.removeViewImmediate(view)
+        } catch (_: Exception) {
+            try { windowManager.removeView(view) } catch (_: Exception) {}
+        }
     }
 
-    
+    private fun showSystemActionRecorderDialog() {
+        if (!isRecording) {
+            Toast.makeText(this, "SYS sirf Glass ON recording ke time use karo", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Record System Action")
+            .setItems(arrayOf("🔙 BACK", "🗂️ RECENTS")) { _, which ->
+                when (which) {
+                    0 -> recordSystemAction(1)
+                    1 -> recordSystemAction(2)
+                }
+                updateUIState("HIDE", true, false, true)
+            }
+            .setNegativeButton("Cancel", null)
+            .create()
+
+        showOverlayDialogSafely(dialog)
+    }
+
     fun recordSystemAction(actionType: Int) {
         if (!isRecording) return
         val view = captureView
@@ -1064,8 +2162,17 @@ private fun showLoopSettingsDialog() {
             android.widget.Toast.makeText(this, "Recording glass ready nahi hai", android.widget.Toast.LENGTH_SHORT).show()
             return
         }
+
+        val msg = when (actionType) {
+            1 -> "🔙 BACK recorded"
+            2 -> "🗂️ RECENTS recorded"
+            else -> {
+                android.widget.Toast.makeText(this, "Unknown system action skip hua", android.widget.Toast.LENGTH_SHORT).show()
+                return
+            }
+        }
+
         view.addSystemGesture(actionType)
-        val msg = if (actionType == 1) { "🔙 BACK recorded" } else { "🗂️ RECENTS recorded" }
         android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).show()
     }
         override fun onDestroy() {
@@ -1112,54 +2219,68 @@ private fun showLoopSettingsDialog() {
         if (unsavedGestures.isNotEmpty()) return true
         return GestureStore.hasRecording(this)
     }
-    private fun updateUIState(startText: String, showSave: Boolean, showOthers: Boolean, showCut: Boolean = true) {
-        if (::btnStart.isInitialized) btnStart.text = startText
-        if (::btnSave.isInitialized) btnSave.visibility = if (showSave) View.VISIBLE else View.GONE
-        if (::btnUndo.isInitialized) {
-            btnUndo.visibility = if (hasAnythingToUndo()) View.VISIBLE else View.GONE
-        }
-        val hasSavedRecording = GestureStore.hasRecording(this)
-        if (::btnLoop.isInitialized) {
-            btnLoop.visibility = if (showOthers && hasSavedRecording) View.VISIBLE else View.GONE
-            updateLoopButtonText(btnLoop)
-        }
-        if (::btnWorkflow.isInitialized) {
-            updateWorkflowButtonUI()
-            btnWorkflow.visibility = if (showOthers && hasSavedRecording) View.VISIBLE else View.GONE
-        }
-        if (::btnCut.isInitialized) btnCut.visibility = if (showCut) View.VISIBLE else View.GONE
-        btnClear?.visibility = if (showOthers && hasSavedRecording && unsavedGestures.isEmpty()) View.VISIBLE else View.GONE
+private fun updateUIState(startText: String, showSave: Boolean, showOthers: Boolean, showCut: Boolean = true) {
+    if (::btnStart.isInitialized) btnStart.text = startText
+
+    val hasSavedRecording = GestureStore.hasRecording(this)
+    val canShowSave = showSave && (isRecording || unsavedGestures.isNotEmpty())
+
+    if (::btnSave.isInitialized) btnSave.visibility = if (canShowSave) View.VISIBLE else View.GONE
+    if (::btnUndo.isInitialized) btnUndo.visibility = if (hasAnythingToUndo()) View.VISIBLE else View.GONE
+
+    if (::btnLoop.isInitialized) {
+        updateLoopButtonText(btnLoop)
+        btnLoop.visibility = if (showOthers && hasSavedRecording && !isRecording) View.VISIBLE else View.GONE
     }
+
+    if (::btnWorkflow.isInitialized) {
+        updateWorkflowButtonUI()
+        btnWorkflow.visibility = if (showOthers && hasSavedRecording && !isRecording) View.VISIBLE else View.GONE
+    }
+
+    if (::btnTools.isInitialized) {
+        btnTools.visibility = if (showOthers && hasSavedRecording && !isRecording) View.VISIBLE else View.GONE
+    }
+
+    if (::btnSystem.isInitialized) {
+        btnSystem.visibility = if (isRecording) View.VISIBLE else View.GONE
+    }
+
+    if (::btnCut.isInitialized) btnCut.visibility = if (showCut) View.VISIBLE else View.GONE
+    btnClear?.visibility = if (showOthers && hasSavedRecording && unsavedGestures.isEmpty() && !isRecording) View.VISIBLE else View.GONE
+
+    refreshPanelButtonStyles()
+}
 
     // ✅ EXACT NAVIGATION GAP FIX
-    private fun extractAndAppendGestures() {
-        val view = captureView ?: return
-        val newGestures = view.getRecordedGestures()
-            .filter { it.points.isNotEmpty() }
-            .sortedBy { it.delayFromStart }
+private fun extractAndAppendGestures() {
+    val view = captureView ?: return
+    val newGestures = view.getRecordedGestures()
+        .filter { it.points.isNotEmpty() }
+        .sortedBy { it.delayFromStart }
 
-        if (newGestures.isEmpty()) return
+    if (newGestures.isEmpty()) return
 
-        val lastGestureEnd = unsavedGestures.maxOfOrNull { g ->
-            g.delayFromStart.coerceAtLeast(0L) + (g.points.lastOrNull()?.t ?: 0L).coerceAtLeast(0L)
-        } ?: 0L
+    val lastGestureEnd = unsavedGestures.maxOfOrNull { gestureEndMs(it) } ?: 0L
 
-        val navigationGap = if (unsavedGestures.isNotEmpty() && glassHiddenAt > 0L) {
-            (view.getRecordingStartTime() - glassHiddenAt)
-                .coerceAtLeast(0L)
-                .coerceAtMost(120000L)
-        } else {
-            0L
-        }
-
-        val timeOffset = if (unsavedGestures.isEmpty()) 0L else lastGestureEnd + navigationGap
-
-        unsavedGestures = (unsavedGestures + newGestures.map { g ->
-            g.copy(delayFromStart = (g.delayFromStart + timeOffset).coerceAtLeast(0L))
-        }).sortedBy { it.delayFromStart }
-
-        nextNavigationGapOverride = null
+    val rawNavigationGap = if (unsavedGestures.isNotEmpty() && glassHiddenAt > 0L) {
+        view.getRecordingStartTime() - glassHiddenAt
+    } else {
+        0L
     }
+
+    val navigationGap = (nextNavigationGapOverride ?: rawNavigationGap)
+        .coerceAtLeast(0L)
+        .coerceAtMost(120000L)
+
+    val timeOffset = if (unsavedGestures.isEmpty()) 0L else lastGestureEnd + navigationGap
+
+    unsavedGestures = (unsavedGestures + newGestures.map { g ->
+        g.copy(delayFromStart = (g.delayFromStart + timeOffset).coerceAtLeast(0L))
+    }).sortedBy { it.delayFromStart }
+
+    nextNavigationGapOverride = null
+}
 
         private fun handleStartButton() {
         pendingDiscardConfirm = false
@@ -1168,7 +2289,8 @@ private fun showLoopSettingsDialog() {
             AutoActionService.stopPlayback(this)
             playbackWatcherRunnable?.let { handler.removeCallbacks(it) }
             playbackWatcherRunnable = null
-            updateUIState("PLAY", false, true, true)
+            val hasOld = GestureStore.hasRecording(this)
+            updateUIState(if (hasOld) "PLAY" else "START", false, hasOld, true)
             restorePanelUI()
             Toast.makeText(this, "Playback stopped", Toast.LENGTH_SHORT).show()
             return
@@ -1221,44 +2343,52 @@ private fun showLoopSettingsDialog() {
         startRecording()
     }
 
-        private fun startRecording() {
-        try { closeSettingsPanel() } catch (_: Exception) {}
+private fun startRecording() {
+    try { closeSettingsPanel() } catch (_: Exception) {}
 
-        if (isRecording) return
-        safeRemoveView(captureView)
-        captureView = null
-        pendingDiscardConfirm = false
-        updateUIState("HIDE", true, false, true)
+    if (isRecording) return
 
-        val touchLayer = TouchCaptureView(this)
-        val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        } else {
-            @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
-        }
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            overlayType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        )
-        params.gravity = Gravity.TOP or Gravity.START
+    safeRemoveView(captureView)
+    captureView = null
+    pendingDiscardConfirm = false
 
-        if (!safeAddView(touchLayer, params, "Recording layer error")) {
-            isRecording = false
-            captureView = null
-            val hasOld = GestureStore.hasRecording(this)
-            updateUIState(if (unsavedGestures.isNotEmpty()) "+ ADD" else if (hasOld) "PLAY" else "START", unsavedGestures.isNotEmpty(), hasOld, true)
-            return
-        }
-
-        captureView = touchLayer
-        isRecording = true
-        bringPanelToFront()
-        Toast.makeText(this, "🟢 Glass ON! Wait aur Tap record honge.", Toast.LENGTH_SHORT).show()
+    val touchLayer = TouchCaptureView(this)
+    val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+    } else {
+        @Suppress("DEPRECATION")
+        WindowManager.LayoutParams.TYPE_PHONE
     }
+
+    val params = WindowManager.LayoutParams(
+        WindowManager.LayoutParams.MATCH_PARENT,
+        WindowManager.LayoutParams.MATCH_PARENT,
+        overlayType,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+        PixelFormat.TRANSLUCENT
+    )
+    params.gravity = Gravity.TOP or Gravity.START
+
+    if (!safeAddView(touchLayer, params, "Recording layer error")) {
+        isRecording = false
+        captureView = null
+        val hasOld = GestureStore.hasRecording(this)
+        updateUIState(
+            if (unsavedGestures.isNotEmpty()) "+ ADD" else if (hasOld) "PLAY" else "START",
+            unsavedGestures.isNotEmpty(),
+            hasOld,
+            true
+        )
+        restorePanelUI()
+        return
+    }
+
+    captureView = touchLayer
+    isRecording = true
+    updateUIState("HIDE", true, false, true)
+    bringPanelToFront()
+    Toast.makeText(this, "🟢 Glass ON! Wait aur Tap record honge.", Toast.LENGTH_SHORT).show()
+}
 
 
     private fun undoLastStep() {
@@ -1284,9 +2414,7 @@ private fun showLoopSettingsDialog() {
             val sortedUnsaved = unsavedGestures.sortedBy { it.delayFromStart }
             val removedGesture = sortedUnsaved.lastOrNull()
             val remainingGestures = sortedUnsaved.dropLast(1)
-            val previousEnd = remainingGestures.maxOfOrNull { g ->
-                g.delayFromStart.coerceAtLeast(0L) + (g.points.lastOrNull()?.t ?: 0L).coerceAtLeast(0L)
-            } ?: 0L
+            val previousEnd = remainingGestures.maxOfOrNull { gestureEndMs(it) } ?: 0L
             val preservedGap = ((removedGesture?.delayFromStart ?: previousEnd) - previousEnd)
                 .coerceAtLeast(0L)
                 .coerceAtMost(120000L)
@@ -1348,59 +2476,90 @@ private fun showLoopSettingsDialog() {
         Toast.makeText(this, "Undo karne ke liye kuch nahi hai", Toast.LENGTH_SHORT).show()
     }
 
-        private fun saveRecording() {
-        if (isRecording) {
-            val liveView = captureView
-            if (liveView != null) {
-                extractAndAppendGestures()
-                safeRemoveView(liveView)
+private fun saveRecording() {
+    if (isSavingRecording) {
+        Toast.makeText(this, "Save already chal raha hai", Toast.LENGTH_SHORT).show()
+        return
+    }
+    isSavingRecording = true
+    try {
+    if (isRecording) {
+        val liveView = captureView
+        if (liveView != null) {
+            extractAndAppendGestures()
+            safeRemoveView(liveView)
+        } else {
+            Toast.makeText(this, "⚠️ Recording layer missing thi. Jo saved buffer hai wahi save hoga.", Toast.LENGTH_LONG).show()
+        }
+        isRecording = false
+        captureView = null
+    }
+
+    glassHiddenAt = 0L
+    nextNavigationGapOverride = null
+    pendingDiscardConfirm = false
+
+    var lastEnd = 0L
+    val cleanGestures = unsavedGestures
+        .filter { it.points.isNotEmpty() }
+        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
+        .mapNotNull { gesture ->
+            // AARISH_SAVE_POINT_TIME_NORMALIZE_V1: SAVE ke waqt edited/imported points ka local t 0 se normalize karo.
+            val orderedPointsForSave = gesture.points
+                .filter { !it.x.isNaN() && !it.x.isInfinite() && !it.y.isNaN() && !it.y.isInfinite() }
+                .sortedBy { it.t.coerceAtLeast(0L) }
+            val baseT = orderedPointsForSave.firstOrNull()?.t?.coerceAtLeast(0L) ?: 0L
+            val cleanPoints = orderedPointsForSave
+                .map { it.copy(t = (it.t.coerceAtLeast(0L) - baseT).coerceAtLeast(0L).coerceAtMost(60000L)) }
+
+            if (cleanPoints.isEmpty()) {
+                null
             } else {
-                Toast.makeText(this, "⚠️ Recording layer missing thi. Jo saved buffer hai wahi save hoga.", Toast.LENGTH_LONG).show()
+                val safeDelay = gesture.delayFromStart.coerceAtLeast(lastEnd).coerceAtMost(24L * 60L * 60L * 1000L)
+                lastEnd = (safeDelay + (cleanPoints.lastOrNull()?.t ?: 0L)).coerceAtLeast(safeDelay)
+                gesture.copy(delayFromStart = safeDelay, points = cleanPoints)
             }
-            isRecording = false
-            captureView = null
         }
 
-        glassHiddenAt = 0L
-        nextNavigationGapOverride = null
-        pendingDiscardConfirm = false
-
-        if (unsavedGestures.isEmpty()) {
-            updateUIState(if (GestureStore.hasRecording(this)) "PLAY" else "START", false, GestureStore.hasRecording(this), true)
-            Toast.makeText(this, "Koi recording nahi mili", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val cleanGestures = unsavedGestures
-            .filter { it.points.isNotEmpty() }
-            .sortedBy { it.delayFromStart }
-
-        val saved = GestureStore.save(this, cleanGestures)
-        if (!saved) {
-            Toast.makeText(this, "❌ Memory save fail ho gayi, dobara SAVE dabao", Toast.LENGTH_LONG).show()
-            updateUIState("+ ADD", cleanGestures.isNotEmpty(), false, true)
-            return
-        }
-
+    if (cleanGestures.isEmpty()) {
         unsavedGestures = emptyList()
-        updateUIState("PLAY", false, true, true)
+        val hasOld = GestureStore.hasRecording(this)
+        updateUIState(if (hasOld) "PLAY" else "START", false, hasOld, true)
         restorePanelUI()
-        Toast.makeText(this, "✅ Poori Memory Save ho gayi!", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Koi valid recording nahi mili", Toast.LENGTH_SHORT).show()
+        return
     }
+
+    val saved = GestureStore.save(this, cleanGestures)
+    if (!saved) {
+        Toast.makeText(this, "❌ Memory save fail ho gayi, dobara SAVE dabao", Toast.LENGTH_LONG).show()
+        updateUIState("+ ADD", true, false, true)
+        restorePanelUI()
+        return
+    }
+
+    unsavedGestures = emptyList()
+    updateUIState("PLAY", false, true, true)
+    restorePanelUI()
+    Toast.makeText(this, "✅ Poori Memory Save ho gayi!", Toast.LENGTH_SHORT).show()
+    } finally {
+        isSavingRecording = false
+    }
+}
 private fun clearSavedRecordingFromPanel() {
-        if (isRecording || AutoActionService.isPlaying() || unsavedGestures.isNotEmpty()) {
-            Toast.makeText(this, "Abhi saaf nahi kar sakte", Toast.LENGTH_SHORT).show()
-            return
-        }
-        GestureStore.clear(this)
-        unsavedGestures = emptyList()
-        glassHiddenAt = 0L
-        nextNavigationGapOverride = null
-        pendingDiscardConfirm = false
-        updateUIState("START", false, false, true)
-        restorePanelUI()
-        Toast.makeText(this, "🗑️ Purani memory clear ho gayi!", Toast.LENGTH_SHORT).show()
+    if (isRecording || AutoActionService.isPlaying() || unsavedGestures.isNotEmpty()) {
+        Toast.makeText(this, "Abhi saaf nahi kar sakte", Toast.LENGTH_SHORT).show()
+        return
     }
+    GestureStore.clear(this)
+    unsavedGestures = emptyList()
+    glassHiddenAt = 0L
+    nextNavigationGapOverride = null
+    pendingDiscardConfirm = false
+    updateUIState("START", false, false, true)
+    restorePanelUI()
+    Toast.makeText(this, "🗑️ Active config ki memory clear ho gayi!", Toast.LENGTH_SHORT).show()
+}
 
 }
 
@@ -1446,6 +2605,7 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
                 event.actionMasked == android.view.MotionEvent.ACTION_CANCEL
             ) {
                 multiTouchCanceled = false
+                currentGestureDownTime = 0L
             }
             currentPoints.clear()
             currentSnapshot = null
@@ -1471,21 +2631,29 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
             android.view.MotionEvent.ACTION_CANCEL -> {
                 currentPoints.clear()
                 currentSnapshot = null
+                currentGestureDownTime = 0L
+                multiTouchCanceled = false
             }
         }
         return true
     }
 
-        private fun addPoint(event: android.view.MotionEvent, forceAdd: Boolean = false) {
-        val relativeTime = (event.eventTime - currentGestureDownTime).coerceAtLeast(0L).coerceAtMost(60000L)
-        if (currentPoints.isNotEmpty() && !forceAdd) {
-            val last = currentPoints.last()
-            val samePlace = kotlin.math.abs(last.x - event.rawX) < 2f && kotlin.math.abs(last.y - event.rawY) < 2f
-            val tooFast = relativeTime - last.t < 12L
-            if (samePlace && tooFast) return
-        }
-        currentPoints.add(GesturePoint(x = event.rawX, y = event.rawY, t = relativeTime))
+private fun addPoint(event: android.view.MotionEvent, forceAdd: Boolean = false) {
+    val downTime = currentGestureDownTime.takeIf { it > 0L } ?: event.eventTime
+    val relativeTime = (event.eventTime - downTime).coerceAtLeast(0L).coerceAtMost(60000L)
+
+    if (currentPoints.isNotEmpty()) {
+        val last = currentPoints.last()
+        val samePlace = kotlin.math.abs(last.x - event.rawX) < 1.5f && kotlin.math.abs(last.y - event.rawY) < 1.5f
+        val sameTime = relativeTime == last.t
+        val tooFast = relativeTime - last.t < 10L
+
+        if (!forceAdd && samePlace && tooFast) return
+        if (forceAdd && samePlace && sameTime && currentPoints.size > 1) return
     }
+
+    currentPoints.add(GesturePoint(x = event.rawX, y = event.rawY, t = relativeTime))
+}
 
     private fun captureSnapshotFor(x: Int, y: Int): TargetSnapshot? {
         val metrics = resources.displayMetrics
@@ -1523,6 +2691,7 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
                 targetDesc = snapshot?.targetDesc,
                 targetId = snapshot?.targetId,
                 targetClass = snapshot?.targetClass,
+                targetPackage = snapshot?.targetPackage,
                 targetContextText = snapshot?.targetContextText,
                 targetChildText = snapshot?.targetChildText,
                 targetSiblingText = snapshot?.targetSiblingText,
@@ -1545,21 +2714,44 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
 
         currentPoints.clear()
         currentSnapshot = null
+        currentGestureDownTime = 0L
+        multiTouchCanceled = false
     }
 
 
-        fun addSystemGesture(actionType: Int) {
-        val dummyCoord = when (actionType) {
-            1 -> -100f
-            2 -> -200f
-            else -> return
-        }
-        val delay = (android.os.SystemClock.uptimeMillis() - recordingStartTime).coerceAtLeast(0L)
-        val points = listOf(GesturePoint(dummyCoord, dummyCoord, 100L))
-        recordedGestures.add(
-            RecordedGesture(delayFromStart = delay, points = points)
+fun addSystemGesture(actionType: Int) {
+    currentPoints.clear()
+    currentSnapshot = null
+    currentGestureDownTime = 0L
+
+    val dummyCoord = when (actionType) {
+        1 -> -100f
+        2 -> -200f
+        else -> return
+    }
+
+    // AARISH_SYSTEM_GAP_FIX_V1: Back/Recents ke baad next recorded tap instantly overlap na ho.
+    val now = android.os.SystemClock.uptimeMillis()
+    val rawDelay = (now - recordingStartTime).coerceAtLeast(0L)
+    val previousEnd = recordedGestures.maxOfOrNull { gesture ->
+        gesture.delayFromStart.coerceAtLeast(0L) +
+            (gesture.points.maxOfOrNull { it.t.coerceAtLeast(0L) } ?: 0L)
+    } ?: 0L
+    val delay = kotlin.math.max(rawDelay, previousEnd + 140L).coerceAtMost(24L * 60L * 60L * 1000L)
+
+    val points = listOf(
+        GesturePoint(dummyCoord, dummyCoord, 0L),
+        GesturePoint(dummyCoord, dummyCoord, 90L)
+    )
+    recordedGestures.add(
+        RecordedGesture(
+            delayFromStart = delay,
+            points = points,
+            targetText = if (actionType == 1) "GLOBAL_BACK" else "GLOBAL_RECENTS",
+            targetDesc = if (actionType == 1) "System Back" else "System Recents"
         )
-    }
+    )
+}
     fun hasRecordedSomething(): Boolean {
         return currentPoints.isNotEmpty() || recordedGestures.isNotEmpty()
     }
