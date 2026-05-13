@@ -1516,7 +1516,7 @@ private fun showWorkflowHubDialog() {
 
         val items = arrayOf(
             "🧩 Build Unlimited Workflow: START ➜ NEXT ➜ STOP",
-            "🔀 Configure NEXT Cycle",
+            "➕ Change NEXT for Active Config",
             "🔁 Loop Settings for Active Config",
             "▶️ Play From Any Config",
             "👀 Preview Active Workflow",
@@ -1769,78 +1769,40 @@ private fun showSelectStartConfigForWorkflowDialog() {
         showOverlayDialogSafely(dialog)
     }
 
-
     private fun showChooseNextConfigDialog(currentConfig: String) {
         val candidates = GestureStore.getAllConfigNames(this)
-            .filter { configName ->
-                configName != currentConfig &&
-                    GestureStore.hasRecordingForConfig(this, configName)
-            }
+            .filter { it != currentConfig && GestureStore.hasRecordingForConfig(this, it) }
             .distinct()
 
         if (candidates.isEmpty()) {
-            Toast.makeText(this, "NEXT Cycle ke liye koi aur saved config nahi mili", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Link ke liye koi saved config nahi mili", Toast.LENGTH_LONG).show()
             return
         }
 
-        val currentList = GestureStore.getNextConfigList(this, currentConfig)
-        val checkedItems = BooleanArray(candidates.size) { index ->
-            currentList.contains(candidates[index])
-        }
-
-        val currentText = if (currentList.isEmpty()) {
-            "Abhi koi NEXT cycle set nahi hai."
-        } else {
-            "Current cycle:\n" + currentList.joinToString(" ➜ ")
-        }
+        val options = mutableListOf("🚫 Stop Here / Remove Link")
+        options.addAll(candidates)
 
         val dialog = android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
-            .setTitle("Configure NEXT Cycle • $currentConfig")
-            .setMessage(
-                "$currentText\n\n" +
-                    "Jitni configs tick karoge, playback har loop me unko rotate karega.\n\n" +
-                    "Example: 1-2-3 ➜ [A/B/C] ➜ 5-10"
-            )
-            .setMultiChoiceItems(candidates.toTypedArray(), checkedItems) { _, which, isChecked ->
-                checkedItems[which] = isChecked
-            }
-            .setPositiveButton("Save Cycle") { _, _ ->
-                val selected = candidates.filterIndexed { index, _ -> checkedItems[index] }
-                val valid = selected.filterNot { next ->
-                    GestureStore.wouldCreateCycle(this, currentConfig, next)
-                }
-
-                if (selected.size != valid.size) {
-                    Toast.makeText(this, "Kuch cycle/circular links skip kar diye", Toast.LENGTH_LONG).show()
-                }
-
-                val ok = GestureStore.setNextConfigList(this, currentConfig, valid)
-
-                Toast.makeText(
-                    this,
-                    if (ok) {
-                        if (valid.isEmpty()) "NEXT Cycle clear ho gaya"
-                        else "NEXT Cycle saved: ${valid.size} config"
+            .setTitle("After '$currentConfig' run:")
+            .setItems(options.toTypedArray()) { _, which ->
+                if (which == 0) {
+                    GestureStore.setNextConfig(this, currentConfig, null)
+                    Toast.makeText(this, "Sequence yahin rukegi", Toast.LENGTH_SHORT).show()
+                } else {
+                    val next = options[which]
+                    if (GestureStore.wouldCreateCycle(this, currentConfig, next)) {
+                        Toast.makeText(this, "Cycle ban rahi thi, isliye link block kar di", Toast.LENGTH_LONG).show()
                     } else {
-                        "NEXT Cycle save nahi hua"
-                    },
-                    Toast.LENGTH_LONG
-                ).show()
-
+                        val ok = GestureStore.setNextConfig(this, currentConfig, next)
+                        Toast.makeText(
+                            this,
+                            if (ok) "Linked: $currentConfig ➜ $next" else "Link save nahi hui",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
                 updateWorkflowButtonUI()
-                restorePanelUI()
             }
-            .setNeutralButton("Clear") { _, _ ->
-                val ok = GestureStore.setNextConfigList(this, currentConfig, emptyList())
-                Toast.makeText(
-                    this,
-                    if (ok) "NEXT Cycle clear ho gaya" else "Clear save nahi hua",
-                    Toast.LENGTH_SHORT
-                ).show()
-                updateWorkflowButtonUI()
-                restorePanelUI()
-            }
-            .setNegativeButton("Cancel", null)
             .create()
 
         showOverlayDialogSafely(dialog)

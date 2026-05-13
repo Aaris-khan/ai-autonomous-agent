@@ -75,7 +75,6 @@ object GestureStore {
     private const val DEFAULT_CONFIG = "Default Config"
     private const val CONFIG_KEY_PREFIX = "config_"
     private const val KEY_NEXT_CONFIG_PREFIX = "next_config_"
-    private const val NEXT_LIST_SEPARATOR = "|||"
     private const val KEY_TAP_ACCURACY_MODE = "tap_accuracy_mode"
 
     private fun prefs(context: Context) =
@@ -388,144 +387,91 @@ object GestureStore {
         } ?: 0L
     }
 
-
-    private fun splitNextConfigRaw(raw: String?): List<String> {
-        if (raw.isNullOrBlank()) return emptyList()
-
-        val parts = if (raw.contains(NEXT_LIST_SEPARATOR)) {
-            raw.split(NEXT_LIST_SEPARATOR)
-        } else {
-            listOf(raw)
-        }
-
-        return parts
-            .map { normalizeConfigName(it) }
-            .filter { it.isNotBlank() }
-            .distinct()
-            .take(60)
-    }
-
-    fun getNextConfigList(context: Context, currentName: String): List<String> {
+    fun getNextConfig(context: Context, currentName: String): String? {
         val safeCurrent = normalizeConfigName(currentName)
         val raw = prefs(context).getString(nextKeyForName(safeCurrent), null)
-        val allNames = getAllConfigNames(context).map { normalizeConfigName(it) }.toSet()
+        if (raw.isNullOrBlank()) return null
 
-        val cleaned = splitNextConfigRaw(raw)
-            .filter { next ->
-                next != safeCurrent &&
-                    allNames.contains(next) &&
-                    hasRecordingForConfig(context, next)
-            }
-            .distinct()
-            .take(60)
+        val safeNext = normalizeConfigName(raw)
 
-        if (!raw.isNullOrBlank() && cleaned.joinToString(NEXT_LIST_SEPARATOR) != raw) {
-            val editor = prefs(context).edit()
-            if (cleaned.isEmpty()) {
-                editor.remove(nextKeyForName(safeCurrent))
-            } else {
-                editor.putString(nextKeyForName(safeCurrent), cleaned.joinToString(NEXT_LIST_SEPARATOR))
-            }
-            editor.apply()
-        }
+        if (safeNext == safeCurrent) return null
+        if (!getAllConfigNames(context).map { normalizeConfigName(it) }.contains(safeNext)) return null
+        if (!hasRecordingForConfig(context, safeNext)) return null
 
-        return cleaned
-    }
-
-    fun getNextConfig(context: Context, currentName: String): String? {
-        return getNextConfigList(context, currentName).firstOrNull()
+        return safeNext
     }
 
     fun wouldCreateCycle(context: Context, currentName: String, nextName: String): Boolean {
         val current = normalizeConfigName(currentName)
-        val target = normalizeConfigName(nextName)
+        var cursor = normalizeConfigName(nextName)
 
-        if (current == target) return true
+        if (current == cursor) return true
 
-        val stack = java.util.ArrayDeque<String>()
         val seen = linkedSetOf<String>()
-        stack.add(target)
-
         var guard = 0
-        while (!stack.isEmpty() && guard < 500) {
-            guard++
 
-            val cursor = normalizeConfigName(stack.removeLast())
+        while (guard < 200 && seen.add(cursor)) {
             if (cursor == current) return true
-
-            if (seen.add(cursor)) {
-                getNextConfigList(context, cursor).forEach { next ->
-                    stack.add(normalizeConfigName(next))
-                }
-            }
+            cursor = getNextConfig(context, cursor) ?: return false
+            guard++
         }
 
         return false
     }
 
-    fun setNextConfigList(context: Context, currentName: String, nextNames: List<String>): Boolean {
-        val safeCurrent = normalizeConfigName(currentName)
-        val allNames = getAllConfigNames(context).map { normalizeConfigName(it) }.toSet()
+fun setNextConfig(context: Context, currentName: String, nextName: String?): Boolean {
+    val safeCurrent = normalizeConfigName(currentName)
+    val editor = prefs(context).edit()
+    val key = nextKeyForName(safeCurrent)
 
-        val cleaned = nextNames
-            .map { normalizeConfigName(it) }
-            .filter { next ->
-                next.isNotBlank() &&
-                    next != safeCurrent &&
-                    allNames.contains(next) &&
-                    hasRecordingForConfig(context, next) &&
-                    !wouldCreateCycle(context, safeCurrent, next)
-            }
-            .distinct()
-            .take(60)
-
-        val editor = prefs(context).edit()
-        val key = nextKeyForName(safeCurrent)
-
-        if (cleaned.isEmpty()) {
-            editor.remove(key)
-        } else {
-            editor.putString(key, cleaned.joinToString(NEXT_LIST_SEPARATOR))
-        }
-
+    if (nextName.isNullOrBlank()) {
+        editor.remove(key)
         return editor.commit()
     }
 
-    fun setNextConfig(context: Context, currentName: String, nextName: String?): Boolean {
-        return if (nextName.isNullOrBlank()) {
-            setNextConfigList(context, currentName, emptyList())
-        } else {
-            setNextConfigList(context, currentName, listOf(nextName))
-        }
+    val safeNext = normalizeConfigName(nextName)
+
+    if (safeNext == safeCurrent) {
+        editor.remove(key)
+        editor.commit()
+        return false
     }
+
+    if (!getAllConfigNames(context).map { normalizeConfigName(it) }.contains(safeNext)) {
+        editor.remove(key)
+        editor.commit()
+        return false
+    }
+
+    if (!hasRecordingForConfig(context, safeNext)) {
+        editor.remove(key)
+        editor.commit()
+        return false
+    }
+
+    if (wouldCreateCycle(context, safeCurrent, safeNext)) {
+        return false
+    }
+
+    editor.putString(key, safeNext)
+    return editor.commit()
+}
 
     fun clearChainFrom(context: Context, startName: String): Int {
         val p = prefs(context)
         val editor = p.edit()
-        val stack = java.util.ArrayDeque<String>()
         val seen = linkedSetOf<String>()
-
-        stack.add(normalizeConfigName(startName))
-
+        var cursor = normalizeConfigName(startName)
         var removed = 0
         var guard = 0
 
-        while (!stack.isEmpty() && guard < 500) {
-            guard++
-
-            val cursor = normalizeConfigName(stack.removeLast())
-            if (!seen.add(cursor)) continue
-
+        while (guard < 200 && seen.add(cursor)) {
             val key = nextKeyForName(cursor)
-            val rawNext = p.getString(key, null)
-
-            if (!rawNext.isNullOrBlank()) {
-                splitNextConfigRaw(rawNext).forEach { next ->
-                    stack.add(normalizeConfigName(next))
-                }
-                editor.remove(key)
-                removed++
-            }
+            val rawNext = p.getString(key, null) ?: break
+            editor.remove(key)
+            removed++
+            cursor = normalizeConfigName(rawNext)
+            guard++
         }
 
         editor.apply()
@@ -535,12 +481,13 @@ object GestureStore {
     fun getWorkflowChain(context: Context, startName: String, maxSteps: Int = 200): List<String> {
         val chain = mutableListOf<String>()
         val seen = linkedSetOf<String>()
-        var cursor: String? = normalizeConfigName(startName)
+        var cursor = normalizeConfigName(startName)
         var guard = 0
 
-        while (!cursor.isNullOrBlank() && guard < maxSteps && seen.add(cursor)) {
+        while (guard < maxSteps && seen.add(cursor)) {
             chain.add(cursor)
-            cursor = getNextConfigList(context, cursor).firstOrNull()
+            val next = getNextConfig(context, cursor) ?: break
+            cursor = next
             guard++
         }
 
@@ -548,35 +495,10 @@ object GestureStore {
     }
 
     fun getWorkflowSummary(context: Context, startName: String): String {
-        val start = normalizeConfigName(startName)
-        val seen = linkedSetOf<String>()
-
-        fun build(cursorRaw: String, depth: Int): String {
-            val cursor = normalizeConfigName(cursorRaw)
-
-            if (depth >= 30) return cursor
-            if (!seen.add(cursor)) return "$cursor ↩"
-
-            val nextList = getNextConfigList(context, cursor)
-
-            if (nextList.isEmpty()) return cursor
-
-            return if (nextList.size == 1) {
-                "$cursor ➜ ${build(nextList.first(), depth + 1)}"
-            } else {
-                val choices = nextList.joinToString(" / ")
-                val firstContinuation = getNextConfigList(context, nextList.first()).firstOrNull()
-
-                if (firstContinuation.isNullOrBlank()) {
-                    "$cursor ➜ [🔀 $choices]"
-                } else {
-                    "$cursor ➜ [🔀 $choices] ➜ ${build(firstContinuation, depth + 1)}"
-                }
-            }
-        }
-
-        return build(start, 0)
+        val chain = getWorkflowChain(context, startName)
+        return if (chain.isEmpty()) normalizeConfigName(startName) else chain.joinToString(" ➜ ")
     }
+
     fun deleteConfig(context: Context, name: String): Boolean {
         val safeName = normalizeConfigName(name)
         if (safeName == DEFAULT_CONFIG) return false

@@ -90,7 +90,6 @@ class AutoActionService : AccessibilityService() {
     private var initialConfigName = ""
     private var currentPlayingConfig = ""
     private val chainVisitedInRun = linkedSetOf<String>()
-    private val configCycleCounters = mutableMapOf<String, Int>()
 
     // AARISH_WAKE_LOCK_ENGINE_V2_HELPERS
     @android.annotation.SuppressLint("WakelockTimeout")
@@ -161,7 +160,6 @@ class AutoActionService : AccessibilityService() {
         handler.removeCallbacksAndMessages(null)
         resetActiveGestures()
         chainVisitedInRun.clear()
-        configCycleCounters.clear()
 
         if (instance == this) {
             instance = null
@@ -184,7 +182,6 @@ class AutoActionService : AccessibilityService() {
         val runId = playbackRunId.incrementAndGet()
         resetActiveGestures()
         chainVisitedInRun.clear()
-        configCycleCounters.clear()
         chainVisitedInRun.add(initialConfigName)
         isPlayingInternal = true
         acquirePlaybackWakeLocks()
@@ -207,23 +204,9 @@ class AutoActionService : AccessibilityService() {
         fun finishSequence() {
             if (!isSamePlaybackRun(runId)) return
 
-            val nextOptions = GestureStore.getNextConfigList(this@AutoActionService, currentPlayingConfig)
-                .filter { option ->
-                    option.isNotBlank() &&
-                        !chainVisitedInRun.contains(option) &&
-                        GestureStore.hasRecordingForConfig(this@AutoActionService, option)
-                }
-                .distinct()
+            val nextConfig = GestureStore.getNextConfig(this@AutoActionService, currentPlayingConfig)
 
-            val nextConfig = if (nextOptions.isNotEmpty()) {
-                val cycleIndex = (configCycleCounters[currentPlayingConfig] ?: 0).coerceAtLeast(0)
-                configCycleCounters[currentPlayingConfig] = cycleIndex + 1
-                nextOptions[cycleIndex % nextOptions.size]
-            } else {
-                null
-            }
-
-            if (!nextConfig.isNullOrBlank()) {
+            if (!nextConfig.isNullOrBlank() && !chainVisitedInRun.contains(nextConfig)) {
                 val nextGestures = GestureStore.loadConfig(this@AutoActionService, nextConfig)
 
                 if (nextGestures.isNotEmpty()) {
@@ -391,7 +374,6 @@ private fun stopPlaybackInternal(showToast: Boolean = true) {
     // Isse service ke future safe callbacks accidentally cancel nahi hote.
     resetActiveGestures()
     chainVisitedInRun.clear()
-    configCycleCounters.clear()
 
     if (showToast) {
         Toast.makeText(this, "Screen Command stopped", Toast.LENGTH_SHORT).show()
