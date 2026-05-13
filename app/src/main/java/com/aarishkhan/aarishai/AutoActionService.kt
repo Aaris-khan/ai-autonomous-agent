@@ -69,7 +69,6 @@ class AutoActionService : AccessibilityService() {
     private var isPlayingInternal = false
 
 
-        releasePlaybackWakeLocks()
     // AARISH_WAKE_LOCK_ENGINE_V2_FIELDS
     private var aarishCpuWakeLock: android.os.PowerManager.WakeLock? = null
     private var aarishScreenWakeLock: android.os.PowerManager.WakeLock? = null
