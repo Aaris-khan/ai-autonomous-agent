@@ -21,8 +21,328 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.abs
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
+import android.os.SystemClock
+import android.view.Choreographer
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.sqrt
 
 class FloatingControlService : Service() {
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // DEEP CONNECTIVITY / ZERO-INTERFERENCE OVERLAY SYNERGY
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    private fun aarishSynergyForcePassThroughParams(params: WindowManager.LayoutParams?) {
+        if (params == null) return
+        params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+        params.flags = params.flags or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+    }
+
+    private fun aarishSynergyMarkUiCleanup() {
+        try {
+            GestureStore.markSynergyUiCleanup(this)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun aarishSynergyStopAllUiSideEffects() {
+        try {
+            aarishSynergyMarkUiCleanup()
+        } catch (_: Exception) {
+        }
+        try {
+            GestureStore.setSynergyPlaybackActive(this, false)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun aarishSynergyServiceReady(): Boolean {
+        return AutoActionService.instance != null
+    }
+
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // AARISHAI V7 PANEL MEMORY + HUD + COUNTDOWN
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    private val v7UiHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var v7CountdownRunnable: Runnable? = null
+
+    private fun v7SavePanelPosition() {
+        val lp = panelParams ?: return
+        getSharedPreferences("aarishai_prefs", android.content.Context.MODE_PRIVATE)
+            .edit()
+            .putInt("v7_panel_x", lp.x)
+            .putInt("v7_panel_y", lp.y)
+            .apply()
+    }
+
+    private fun v7RestorePanelPosition() {
+        val lp = panelParams ?: return
+        val view = panelView ?: return
+        val prefs = getSharedPreferences("aarishai_prefs", android.content.Context.MODE_PRIVATE)
+        lp.x = prefs.getInt("v7_panel_x", lp.x)
+        lp.y = prefs.getInt("v7_panel_y", lp.y)
+        try {
+            windowManager.updateViewLayout(view, lp)
+        } catch (_: Exception) {
+        }
+    }
+
+    fun v7ShowLoopHud(current: Int, total: Int, mode: String = "COUNT") {
+        val label = when (mode.uppercase()) {
+            "TIME" -> "⏱ $current / $total"
+            "INF", "INFINITE" -> "∞ loop ×$current"
+            else -> "🔁 $current / $total"
+        }
+        try {
+            tvClickBadge?.post {
+                tvClickBadge?.text = label
+                tvClickBadge?.visibility = android.view.View.VISIBLE
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    fun v7HideLoopHud() {
+        try {
+            tvClickBadge?.post {
+                tvClickBadge?.visibility = android.view.View.GONE
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    fun v7ScheduleStart(delaySec: Int, onStart: () -> Unit) {
+        v7CancelScheduledStart()
+        if (delaySec <= 0) {
+            onStart()
+            return
+        }
+
+        var left = delaySec.coerceIn(1, 60)
+        lateinit var task: Runnable
+        task = Runnable {
+            if (left <= 0) {
+                v7HideLoopHud()
+                onStart()
+            } else {
+                try {
+                    tvClickBadge?.text = "▶ in ${left}s"
+                    tvClickBadge?.visibility = android.view.View.VISIBLE
+                } catch (_: Exception) {
+                }
+                left--
+                v7UiHandler.postDelayed(task, 1000L)
+            }
+        }
+
+        v7CountdownRunnable = task
+        v7UiHandler.post(task)
+    }
+
+    fun v7CancelScheduledStart() {
+        v7CountdownRunnable?.let { v7UiHandler.removeCallbacks(it) }
+        v7CountdownRunnable = null
+    }
+
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // AARISHAI V6 PANEL MEMORY + COUNTDOWN
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    private val aarishV6StartHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var aarishV6StartRunnable: Runnable? = null
+
+    private fun aarishV6SavePanelPosition() {
+        val lp = panelParams ?: return
+        getSharedPreferences("aarishai_prefs", android.content.Context.MODE_PRIVATE)
+            .edit()
+            .putInt("aarish_v6_panel_x", lp.x)
+            .putInt("aarish_v6_panel_y", lp.y)
+            .apply()
+    }
+
+    private fun aarishV6RestorePanelPosition() {
+        val lp = panelParams ?: return
+        val view = panelView ?: return
+        val prefs = getSharedPreferences("aarishai_prefs", android.content.Context.MODE_PRIVATE)
+        lp.x = prefs.getInt("aarish_v6_panel_x", lp.x)
+        lp.y = prefs.getInt("aarish_v6_panel_y", lp.y)
+        try {
+            windowManager.updateViewLayout(view, lp)
+        } catch (_: Exception) {
+        }
+    }
+
+    fun aarishV6ShowLoopHud(current: Int, total: Int, mode: String = "COUNT") {
+        val label = when (mode.uppercase()) {
+            "TIME" -> "⏱ ${current}s / ${total}s"
+            "INF", "INFINITE" -> "∞ loop ×$current"
+            else -> "🔁 $current / $total"
+        }
+        try {
+            tvClickBadge?.post {
+                tvClickBadge?.text = label
+                tvClickBadge?.visibility = android.view.View.VISIBLE
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    fun aarishV6HideLoopHud() {
+        try {
+            tvClickBadge?.post {
+                tvClickBadge?.visibility = android.view.View.GONE
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    fun aarishV6ScheduleStart(delaySec: Int, onStart: () -> Unit) {
+        aarishV6CancelScheduledStart()
+        if (delaySec <= 0) {
+            onStart()
+            return
+        }
+
+        var left = delaySec.coerceIn(1, 60)
+        lateinit var task: Runnable
+        task = Runnable {
+            if (left <= 0) {
+                aarishV6HideLoopHud()
+                onStart()
+            } else {
+                try {
+                    tvClickBadge?.text = "▶ in ${left}s"
+                    tvClickBadge?.visibility = android.view.View.VISIBLE
+                } catch (_: Exception) {
+                }
+                left--
+                aarishV6StartHandler.postDelayed(task, 1000L)
+            }
+        }
+
+        aarishV6StartRunnable = task
+        aarishV6StartHandler.post(task)
+    }
+
+    fun aarishV6CancelScheduledStart() {
+        aarishV6StartRunnable?.let { aarishV6StartHandler.removeCallbacks(it) }
+        aarishV6StartRunnable = null
+    }
+
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // SCHEDULED START  (countdown before replay begins)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    private var scheduledStartJob: kotlinx.coroutines.Job? = null
+
+    fun scheduleStart(delaySec: Int, onStart: () -> Unit) {
+        scheduledStartJob?.cancel()
+        if (delaySec <= 0) { onStart(); return }
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main)
+        scheduledStartJob = scope.launch {
+            for (s in delaySec downTo 1) {
+                tvClickBadge?.text = "▶ in ${s}s"
+                tvClickBadge?.visibility = android.view.View.VISIBLE
+                kotlinx.coroutines.delay(1000L)
+            }
+            tvClickBadge?.visibility = android.view.View.GONE
+            onStart()
+        }
+    }
+
+    fun cancelScheduledStart() {
+        scheduledStartJob?.cancel()
+        scheduledStartJob = null
+        tvClickBadge?.post { tvClickBadge?.visibility = android.view.View.GONE }
+    }
+
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // LOOP PROGRESS HUD
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    private var tvLoopHud: android.widget.TextView? = null
+    @Volatile private var _loopTotal  = 0
+    @Volatile private var _loopCurrent = 0
+
+    fun updateLoopHud(current: Int, total: Int, mode: String = "COUNT") {
+        _loopCurrent = current; _loopTotal = total
+        val label = when (mode.uppercase()) {
+            "TIME"  -> "⏱ ${total - current}s left"
+            "INF"   -> "∞ loop  ×${current}"
+            else    -> "🔁 $current / $total"
+        }
+        tvLoopHud?.post {
+            tvLoopHud?.text  = label
+            tvLoopHud?.visibility = android.view.View.VISIBLE
+        }
+    }
+
+    fun hideLoopHud() {
+        _loopCurrent = 0; _loopTotal = 0
+        tvLoopHud?.post { tvLoopHud?.visibility = android.view.View.GONE }
+    }
+
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // PANEL POSITION MEMORY
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    private fun savePanelPosition(x: Int, y: Int) {
+        getSharedPreferences("aarishai_prefs", android.content.Context.MODE_PRIVATE)
+            .edit().putInt("panel_x", x).putInt("panel_y", y).apply()
+    }
+
+    private fun loadPanelPosition(): Pair<Int, Int> {
+        val p = getSharedPreferences("aarishai_prefs", android.content.Context.MODE_PRIVATE)
+        return p.getInt("panel_x", 100) to p.getInt("panel_y", 300)
+    }
+
+    private fun applyPanelPosition() {
+        val (px, py) = loadPanelPosition()
+        panelParams?.let { lp ->
+            lp.x = px; lp.y = py
+            try { windowManager?.updateViewLayout(panelView, lp) } catch (_: Exception) {}
+        }
+    }
+
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // LIVE CLICK COUNTER
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    @Volatile private var _clickCount = 0
+    private var tvClickBadge: android.widget.TextView? = null
+
+    fun incrementClickCounter() {
+        val n = ++_clickCount
+        tvClickBadge?.post {
+            tvClickBadge?.text = "✦ $n"
+            tvClickBadge?.visibility = android.view.View.VISIBLE
+        }
+    }
+
+    fun resetClickCounter() {
+        _clickCount = 0
+        tvClickBadge?.post {
+            tvClickBadge?.text = "✦ 0"
+            tvClickBadge?.visibility = android.view.View.GONE
+        }
+    }
+
+
+    // ═══════════════════════════════════════════════════════════════
+    // FLAWLESS SNAKE ENGINE STATE
+    // zero-touch-interference + vsync laser visualizer
+    // ═══════════════════════════════════════════════════════════════
+    private var snakeLaserView: SnakeLaserTrailView? = null
+    private var snakeLaserParams: WindowManager.LayoutParams? = null
+    private var snakeLastEventAt = 0L
+
 
     companion object {
         @Volatile var instance: FloatingControlService? = null
@@ -91,6 +411,9 @@ class FloatingControlService : Service() {
     // AARISH_ULTRA_TOUCH_SYSTEM_V2_END
 
             override fun onCreate() {
+        // AARISH_SYNERGY_FLOAT_CREATE
+        instance = this
+
         super.onCreate()
         instance = this
         if (!startForegroundServiceNotification()) {
@@ -359,7 +682,9 @@ private fun refreshPanelButtonStyles() {
         WindowManager.LayoutParams.WRAP_CONTENT,
         WindowManager.LayoutParams.WRAP_CONTENT,
         overlayType,
-        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                    or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
         PixelFormat.TRANSLUCENT
     )
 
@@ -435,32 +760,41 @@ private fun checkPlaybackStateContinuously() {
 }
 
     private fun hidePanelUIForPlayback() {
-    if (panelHiddenForPlayback) return
-    panelHiddenForPlayback = true
+        
+        if (panelHiddenForPlayback) return
+        panelHiddenForPlayback = true
+forceRemoveGreenGlassNow("playback")
+        if (panelHiddenForPlayback) return
+        panelHiddenForPlayback = true
 
-    if (::btnSave.isInitialized) btnSave.visibility = View.GONE
-    if (::btnUndo.isInitialized) btnUndo.visibility = View.GONE
-    if (::btnCut.isInitialized) btnCut.visibility = View.GONE
-    if (::label.isInitialized) label.visibility = View.GONE
-    if (::btnLoop.isInitialized) btnLoop.visibility = View.GONE
-    if (::btnWorkflow.isInitialized) btnWorkflow.visibility = View.GONE
-    if (::btnTools.isInitialized) btnTools.visibility = View.GONE
-    if (::btnSystem.isInitialized) btnSystem.visibility = View.GONE
-    btnClear?.visibility = View.GONE
+        btnSave.visibility = View.GONE
+        btnUndo.visibility = View.GONE
+        btnCut.visibility = View.GONE
+        label.visibility = View.GONE
+        btnLoop.visibility = View.GONE
+        btnClear?.visibility = View.GONE
 
-    val params = panelParams
-    val panel = panelView
-    if (params != null && panel != null) {
-        oldPanelX = params.x
-        oldPanelY = params.y
-        val maxX = if (panel.width > 0) resources.displayMetrics.widthPixels - panel.width else resources.displayMetrics.widthPixels
-        val maxY = if (panel.height > 0) resources.displayMetrics.heightPixels - panel.height else resources.displayMetrics.heightPixels
+        val params = panelParams
+        val panel = panelView
+        if (params != null && panel != null) {
+            oldPanelX = params.x
+            oldPanelY = params.y
 
-        params.x = (resources.displayMetrics.widthPixels - dp(118)).coerceIn(0, if (maxX > 0) maxX else resources.displayMetrics.widthPixels)
-        params.y = dp(58).coerceIn(0, if (maxY > 0) maxY else resources.displayMetrics.heightPixels)
-        safeUpdateView(panel, params)
+            val density = resources.displayMetrics.density
+            val maxX = if (panel.width > 0) resources.displayMetrics.widthPixels - panel.width else resources.displayMetrics.widthPixels
+            val maxY = if (panel.height > 0) resources.displayMetrics.heightPixels - panel.height else resources.displayMetrics.heightPixels
+
+            params.x = (resources.displayMetrics.widthPixels - (120 * density).toInt())
+                .coerceIn(0, if (maxX > 0) maxX else resources.displayMetrics.widthPixels)
+            params.y = (60 * density).toInt()
+                .coerceIn(0, if (maxY > 0) maxY else resources.displayMetrics.heightPixels)
+
+            try {
+                windowManager.updateViewLayout(panel, params)
+            } catch (_: Exception) {
+            }
+        }
     }
-}
 
     // BUG #5 FIX: btnLoop tabhi dikhega jab actually recording save ho
         // BUG FIX: Empty recording par SAVE hide rahega
@@ -473,7 +807,9 @@ private fun clampPanelToScreen(params: WindowManager.LayoutParams, panel: View) 
 }
 
 private fun restorePanelUI() {
-    val shouldRestorePlaybackPosition = panelHiddenForPlayback
+    
+        panelHiddenForPlayback = false
+val shouldRestorePlaybackPosition = panelHiddenForPlayback
     panelHiddenForPlayback = false
 
     val hasSaved = GestureStore.hasRecording(this)
@@ -2063,6 +2399,8 @@ private fun showLoopSettingsDialog() {
 
 
     private fun stopEverythingAndClose() {
+        val hasLiveRecording = isRecording && ((captureView as? TouchCaptureView)?.getRecordedGestures()?.isNotEmpty() == true)
+        forceRemoveGreenGlassNow("cut")
         val liveGestures = if (isRecording) captureView?.getRecordedGestures().orEmpty() else emptyList()
         val hasLiveRecording = liveGestures.isNotEmpty()
 
@@ -2109,6 +2447,7 @@ private fun showLoopSettingsDialog() {
         val dragSlop = dp(10).toFloat()
 
         dragHandle.setOnTouchListener { _, event ->
+            snakeEngineHandleMotionEvent(event)
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     initialX = params.x
@@ -2147,6 +2486,11 @@ private fun showLoopSettingsDialog() {
                 }
 
                 MotionEvent.ACTION_UP -> {
+                    // V7_PANEL_SAVE_HOOK
+                    v7SavePanelPosition()
+                    // AARISH_V6_SAVE_HOOK
+                    aarishV6SavePanelPosition()
+                    panelParams?.let { savePanelPosition(it.x, it.y) }
                     if (!isDragging) {
                         dragHandle.performClick()
                     }
@@ -2155,6 +2499,7 @@ private fun showLoopSettingsDialog() {
                 }
 
                 MotionEvent.ACTION_CANCEL -> {
+                    currentSnapshot = null
                     isDragging = false
                     true
                 }
@@ -2163,6 +2508,269 @@ private fun showLoopSettingsDialog() {
             }
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // FLAWLESS SNAKE LASER TRAIL ENGINE
+    // FLAG_NOT_TOUCHABLE means this overlay never consumes MotionEvent.
+    // Recording touch listener only mirrors coordinates into this view.
+    // ═══════════════════════════════════════════════════════════════
+    private inner class SnakeLaserTrailView(context: android.content.Context) :
+        View(context),
+        Choreographer.FrameCallback {
+
+        private val path = Path()
+        private val dirty = RectF()
+        private val lastDirty = RectF()
+
+        private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 18f
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = Color.argb(115, 0, 255, 170)
+        }
+
+        private val corePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 5.5f
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = Color.WHITE
+        }
+
+        private var active = false
+        private var framePosted = false
+        private var hasPoint = false
+        private var lastX = 0f
+        private var lastY = 0f
+        private var lastT = 0L
+        private var speed = 0f
+
+        init {
+            setWillNotDraw(false)
+            isClickable = false
+            isFocusable = false
+            importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+            setLayerType(LAYER_TYPE_HARDWARE, null)
+        }
+
+        fun onMirrorTouch(event: MotionEvent) {
+            val x = event.rawX
+            val y = event.rawY
+            val now = SystemClock.uptimeMillis()
+
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    clearNow()
+                    active = true
+                    hasPoint = true
+                    lastX = x
+                    lastY = y
+                    lastT = now
+                    speed = 0f
+                    path.moveTo(x, y)
+                    markDirty(x, y, 36f)
+                    postFrame()
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    if (!active || !hasPoint) {
+                        active = true
+                        hasPoint = true
+                        lastX = x
+                        lastY = y
+                        lastT = now
+                        path.moveTo(x, y)
+                        markDirty(x, y, 36f)
+                        postFrame()
+                        return
+                    }
+
+                    val dx = x - lastX
+                    val dy = y - lastY
+                    if (abs(dx) < 0.7f && abs(dy) < 0.7f) return
+
+                    val dt = (now - lastT).coerceAtLeast(1L)
+                    speed = (sqrt((dx * dx + dy * dy).toDouble()) / dt).toFloat()
+
+                    val midX = (lastX + x) * 0.5f
+                    val midY = (lastY + y) * 0.5f
+                    path.quadTo(lastX, lastY, midX, midY)
+
+                    markDirty(lastX, lastY, 42f)
+                    markDirty(x, y, 42f)
+
+                    lastX = x
+                    lastY = y
+                    lastT = now
+                    postFrame()
+                }
+
+                MotionEvent.ACTION_UP,
+                MotionEvent.ACTION_CANCEL -> {
+                    currentSnapshot = null
+                    snakeEngineClearNow()
+                    clearNow()
+                }
+            }
+        }
+
+        private fun markDirty(x: Float, y: Float, pad: Float) {
+            val l = x - pad
+            val t = y - pad
+            val r = x + pad
+            val b = y + pad
+
+            if (dirty.isEmpty) dirty.set(l, t, r, b)
+            else dirty.union(l, t, r, b)
+        }
+
+        private fun speedColor(): Int {
+            val v = (speed / 3.0f).coerceIn(0f, 1f)
+            val r = (0 + 255 * v).toInt().coerceIn(0, 255)
+            val g = (255 - 130 * v).toInt().coerceIn(60, 255)
+            val b = (190 - 160 * v).toInt().coerceIn(30, 255)
+            return Color.rgb(r, g, b)
+        }
+
+        private fun postFrame() {
+            if (framePosted) return
+            framePosted = true
+            Choreographer.getInstance().postFrameCallback(this)
+        }
+
+        override fun doFrame(frameTimeNanos: Long) {
+            framePosted = false
+            if (!active || path.isEmpty) return
+
+            val rect = RectF()
+            if (!dirty.isEmpty) rect.union(dirty)
+            if (!lastDirty.isEmpty) rect.union(lastDirty)
+
+            if (!rect.isEmpty) {
+                val l = rect.left.toInt().coerceAtLeast(0)
+                val t = rect.top.toInt().coerceAtLeast(0)
+                val r = rect.right.toInt().coerceAtMost(width)
+                val b = rect.bottom.toInt().coerceAtMost(height)
+                if (r > l && b > t) invalidate(l, t, r, b) else invalidate()
+            } else {
+                invalidate()
+            }
+
+            lastDirty.set(dirty)
+            dirty.setEmpty()
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            if (path.isEmpty) return
+
+            val c = speedColor()
+
+            glowPaint.color = c
+            glowPaint.alpha = 90
+            glowPaint.strokeWidth = 18f
+            canvas.drawPath(path, glowPaint)
+
+            glowPaint.alpha = 150
+            glowPaint.strokeWidth = 10f
+            canvas.drawPath(path, glowPaint)
+
+            corePaint.alpha = 245
+            canvas.drawPath(path, corePaint)
+        }
+
+        fun clearNow() {
+            active = false
+            hasPoint = false
+            speed = 0f
+            path.reset()
+            dirty.set(0f, 0f, width.toFloat(), height.toFloat())
+            lastDirty.set(dirty)
+            invalidate()
+            if (framePosted) {
+                Choreographer.getInstance().removeFrameCallback(this)
+                framePosted = false
+            }
+        }
+
+        fun destroySnake() {
+            clearNow()
+            try {
+                Choreographer.getInstance().removeFrameCallback(this)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun ensureSnakeLaserOverlay() {
+        if (snakeLaserView != null) return
+
+        val overlayType =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_PHONE
+
+        val flags =
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            overlayType,
+            flags,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            x = 0
+            y = 0
+            alpha = 1f
+        }
+
+        try {
+            val view = SnakeLaserTrailView(this)
+            windowManager.addView(view, lp)   // assign refs ONLY after successful add
+            snakeLaserView = view
+            snakeLaserParams = lp
+        } catch (_: Exception) {
+            try { safeRemoveView(snakeLaserView) } catch (_: Exception) {}
+
+            snakeLaserView = null
+            snakeLaserParams = null
+        }
+    }
+
+    private fun snakeEngineHandleMotionEvent(event: MotionEvent) {
+        snakeLastEventAt = SystemClock.uptimeMillis()
+        ensureSnakeLaserOverlay()
+        snakeLaserView?.onMirrorTouch(event)
+    }
+
+    private fun snakeEngineClearNow() {
+        snakeLaserView?.clearNow()
+    }
+
+    private fun snakeEngineDestroy() {
+        val v = snakeLaserView
+        snakeLaserView = null
+        snakeLaserParams = null
+        try {
+            v?.destroySnake()
+        } catch (_: Exception) {
+        }
+        try {
+            if (v != null) windowManager.removeView(v)
+        } catch (_: Exception) {
+        }
+    }
+
 
     private fun safeAddView(view: View, params: WindowManager.LayoutParams, errorMessage: String): Boolean {
         return try {
@@ -2657,6 +3265,12 @@ private fun showLoopSettingsDialog() {
     // AARISH_SHARE_MENU_LIVE_GUARD_V4_END
 
         override fun onDestroy() {
+        forceRemoveGreenGlassNow("destroy")
+        // AARISH_SYNERGY_FLOAT_DESTROY
+        instance = null
+        aarishSynergyStopAllUiSideEffects()
+
+        snakeEngineDestroy()
         playbackWatcherRunnable?.let { handler.removeCallbacks(it) }
         playbackWatcherRunnable = null
         closeSettingsPanel()
@@ -2829,60 +3443,110 @@ private fun extractAndAppendGestures() {
         startRecording()
     }
 
+    // GODMODE_GREEN_GLASS_LIFECYCLE_START
+    private var greenGlassToken = 0
 
-private fun startRecording() {
-    try { closeSettingsPanel() } catch (_: Exception) {}
-
-    if (isRecording) return
-
-    safeRemoveView(captureView)
-    captureView = null
-    pendingDiscardConfirm = false
-
-    val touchLayer = TouchCaptureView(this)
-    val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-    } else {
-        @Suppress("DEPRECATION")
-        WindowManager.LayoutParams.TYPE_PHONE
-    }
-
-    val params = WindowManager.LayoutParams(
-        WindowManager.LayoutParams.MATCH_PARENT,
-        WindowManager.LayoutParams.MATCH_PARENT,
-        overlayType,
-        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-            WindowManager.LayoutParams.FLAG_SPLIT_TOUCH,
-        PixelFormat.TRANSLUCENT
-    )
-    params.gravity = Gravity.TOP or Gravity.START
-
-    if (!safeAddView(touchLayer, params, "Recording layer error")) {
-        isRecording = false
+    private fun forceRemoveGreenGlassNow(reason: String = "") {
+        greenGlassToken++
+        val old = captureView
         captureView = null
-        val hasOld = GestureStore.hasRecording(this)
-        updateUIState(
-            if (unsavedGestures.isNotEmpty()) "+ ADD" else if (hasOld) "PLAY" else "START",
-            unsavedGestures.isNotEmpty(),
-            hasOld,
-            true
-        )
-        restorePanelUI()
-        return
+        isRecording = false
+
+        try {
+            if (old is TouchCaptureView) {
+                old.destroyGlass()
+            }
+        } catch (_: Exception) {
+        }
+
+        if (old != null) {
+            try {
+                windowManager.removeViewImmediate(old)
+            } catch (_: Exception) {
+                try {
+                    windowManager.removeView(old)
+                } catch (_: Exception) {
+                }
+            }
+        }
     }
 
-    captureView = touchLayer
-    isRecording = true
-    updateUIState("DONE", true, false, true)
-    bringPanelToFront()
-    Toast.makeText(
-        this,
-        "🟢 LIVE Glass ON! Tap/swipe/double-tap/long-press record + live fire. Share/Dialog fallback bhi ON hai.",
-        Toast.LENGTH_SHORT
-    ).show()
-}
+    private fun clearGreenGlassStateOnly() {
+        try {
+            (captureView as? TouchCaptureView)?.destroyGlass()
+        } catch (_: Exception) {
+        }
+        captureView = null
+        isRecording = false
+    }
+    // GODMODE_GREEN_GLASS_LIFECYCLE_END
+    private fun startRecording() {
+        if (AutoActionService.isPlaying()) {
+            Toast.makeText(this, "Playback ke time recording start nahi ho sakti", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        try {
+            closeSettingsPanel()
+        } catch (_: Exception) {
+        }
+
+        forceRemoveGreenGlassNow("before_start")
+        greenGlassToken++
+        val myToken = greenGlassToken
+
+        val touchLayer = TouchCaptureView(this).apply {
+            alpha = 1f
+            visibility = View.VISIBLE
+        }
+
+        val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            overlayType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = 0
+            y = 0
+        }
+
+        val added = safeAddView(touchLayer, params, "Recording layer error")
+        if (!added || myToken != greenGlassToken) {
+            try {
+                touchLayer.destroyGlass()
+                windowManager.removeViewImmediate(touchLayer)
+            } catch (_: Exception) {
+            }
+            clearGreenGlassStateOnly()
+            val hasOld = GestureStore.hasRecording(this)
+            updateUIState(if (unsavedGestures.isNotEmpty()) "+ ADD" else if (hasOld) "PLAY" else "START", unsavedGestures.isNotEmpty(), hasOld, true)
+            Toast.makeText(this, "Green Glass start nahi hua", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        captureView = touchLayer
+        updateUIState("HIDE", true, false, true)
+
+        try {
+            bringPanelToFront()
+        } catch (_: Exception) {
+        }
+
+        Toast.makeText(this, "🟢 Green Glass ON", Toast.LENGTH_SHORT).show()
+    }
+
 
 
 
@@ -2970,77 +3634,41 @@ private fun startRecording() {
 
         Toast.makeText(this, "Undo karne ke liye kuch nahi hai", Toast.LENGTH_SHORT).show()
     }
-
-private fun saveRecording() {
-    if (isSavingRecording) {
-        Toast.makeText(this, "Save already chal raha hai", Toast.LENGTH_SHORT).show()
-        return
-    }
-    isSavingRecording = true
-    try {
-    if (isRecording) {
-        val liveView = captureView
-        if (liveView != null) {
-            extractAndAppendGestures()
-            safeRemoveView(liveView)
-        } else {
-            Toast.makeText(this, "⚠️ Recording layer missing thi. Jo saved buffer hai wahi save hoga.", Toast.LENGTH_LONG).show()
-        }
-        isRecording = false
-        captureView = null
-    }
-
-    glassHiddenAt = 0L
-    nextNavigationGapOverride = null
-    pendingDiscardConfirm = false
-
-    var lastEnd = 0L
-    val cleanGestures = unsavedGestures
-        .filter { it.points.isNotEmpty() }
-        .sortedBy { it.delayFromStart.coerceAtLeast(0L) }
-        .mapNotNull { gesture ->
-            // AARISH_SAVE_POINT_TIME_NORMALIZE_V1: SAVE ke waqt edited/imported points ka local t 0 se normalize karo.
-            val orderedPointsForSave = gesture.points
-                .filter { !it.x.isNaN() && !it.x.isInfinite() && !it.y.isNaN() && !it.y.isInfinite() }
-                .sortedBy { it.t.coerceAtLeast(0L) }
-            val baseT = orderedPointsForSave.firstOrNull()?.t?.coerceAtLeast(0L) ?: 0L
-            val cleanPoints = orderedPointsForSave
-                .map { it.copy(t = (it.t.coerceAtLeast(0L) - baseT).coerceAtLeast(0L).coerceAtMost(600000L)) }
-
-            if (cleanPoints.isEmpty()) {
-                null
+    private fun saveRecording() {
+        if (isRecording) {
+            val liveView = captureView
+            if (liveView != null) {
+                extractAndAppendGestures()
+                safeRemoveView(liveView)
             } else {
-                val safeDelay = gesture.delayFromStart.coerceAtLeast(lastEnd).coerceAtMost(24L * 60L * 60L * 1000L)
-                lastEnd = (safeDelay + (cleanPoints.lastOrNull()?.t ?: 0L)).coerceAtLeast(safeDelay)
-                gesture.copy(delayFromStart = safeDelay, points = cleanPoints)
+                Toast.makeText(this, "⚠️ Recording layer missing thi. Saved buffer hi save hoga.", Toast.LENGTH_LONG).show()
             }
+            isRecording = false
+            captureView = null
         }
 
-    if (cleanGestures.isEmpty()) {
+        if (unsavedGestures.isEmpty()) {
+            Toast.makeText(this, "Koi recording nahi hai", Toast.LENGTH_SHORT).show()
+            updateUIState("+ ADD", false, false)
+            return
+        }
+
+        val ok = GestureStore.save(this, unsavedGestures)
+        if (!ok) {
+            Toast.makeText(this, "❌ Save fail hua. Recording RAM me safe hai, dobara SAVE dabao.", Toast.LENGTH_LONG).show()
+            updateUIState("SAVE", true, false)
+            return
+        }
+
         unsavedGestures = emptyList()
-        val hasOld = GestureStore.hasRecording(this)
-        updateUIState(if (hasOld) "PLAY" else "START", false, hasOld, true)
+        glassHiddenAt = 0L
+        updateUIState("PLAY", false, true)
         restorePanelUI()
-        Toast.makeText(this, "Koi valid recording nahi mili", Toast.LENGTH_SHORT).show()
-        return
+        Toast.makeText(this, "✅ Recording saved", Toast.LENGTH_SHORT).show()
     }
 
-    val saved = GestureStore.save(this, cleanGestures)
-    if (!saved) {
-        Toast.makeText(this, "❌ Memory save fail ho gayi, dobara SAVE dabao", Toast.LENGTH_LONG).show()
-        updateUIState("+ ADD", true, false, true)
-        restorePanelUI()
-        return
-    }
 
-    unsavedGestures = emptyList()
-    updateUIState("PLAY", false, true, true)
-    restorePanelUI()
-    Toast.makeText(this, "✅ Poori Memory Save ho gayi!", Toast.LENGTH_SHORT).show()
-    } finally {
-        isSavingRecording = false
-    }
-}
+
 private fun clearSavedRecordingFromPanel() {
     if (isRecording || AutoActionService.isPlaying() || unsavedGestures.isNotEmpty()) {
         Toast.makeText(this, "Abhi saaf nahi kar sakte", Toast.LENGTH_SHORT).show()
@@ -3087,18 +3715,14 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
     fun getRecordingStartTime(): Long {
         return recordingStartTime
     }
-
     override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
-        // Multi-touch/pinch/two-finger accidental input ko record mat karo.
-        // ACTION_POINTER_DOWN ke baad final ACTION_UP ko bhi block karo,
-        // warna ek ghost tap save ho sakta hai.
         if (event.pointerCount > 1 ||
             event.actionMasked == android.view.MotionEvent.ACTION_POINTER_DOWN ||
             event.actionMasked == android.view.MotionEvent.ACTION_POINTER_UP
         ) {
+            multiTouchCanceled = true
             currentPoints.clear()
             currentSnapshot = null
-            multiTouchCanceled = true
             return true
         }
 
@@ -3107,7 +3731,6 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
                 event.actionMasked == android.view.MotionEvent.ACTION_CANCEL
             ) {
                 multiTouchCanceled = false
-                currentGestureDownTime = 0L
             }
             currentPoints.clear()
             currentSnapshot = null
@@ -3116,29 +3739,34 @@ class TouchCaptureView(context: android.content.Context) : android.view.View(con
 
         when (event.actionMasked) {
             android.view.MotionEvent.ACTION_DOWN -> {
+                multiTouchCanceled = false
                 currentPoints.clear()
+                currentSnapshot = null
                 currentGestureDownTime = event.eventTime
                 addPoint(event, forceAdd = true)
-
-                // Button/symbol ka snapshot DOWN par lo, screen change hone se pehle
                 currentSnapshot = captureSnapshotFor(event.rawX.toInt(), event.rawY.toInt())
             }
+
             android.view.MotionEvent.ACTION_MOVE -> {
                 addPoint(event, forceAdd = false)
             }
+
             android.view.MotionEvent.ACTION_UP -> {
                 addPoint(event, forceAdd = true)
                 saveCurrentGesture()
             }
+
             android.view.MotionEvent.ACTION_CANCEL -> {
+                multiTouchCanceled = false
                 currentPoints.clear()
                 currentSnapshot = null
-                currentGestureDownTime = 0L
-                multiTouchCanceled = false
             }
         }
         return true
     }
+
+
+
 
 
 private fun addPoint(event: android.view.MotionEvent, forceAdd: Boolean = false) {
@@ -3213,80 +3841,56 @@ private fun normalizePointsForSave(points: List<GesturePoint>): List<GesturePoin
             screenH
         )
     }
-
-
     private fun saveCurrentGesture() {
         if (currentPoints.isEmpty()) return
 
-        val cleanPoints = normalizePointsForSave(currentPoints)
-        if (cleanPoints.isEmpty()) {
-            currentPoints.clear()
-            currentSnapshot = null
-            currentGestureDownTime = 0L
-            multiTouchCanceled = false
-            return
-        }
-
-        val rawDelay = (currentGestureDownTime - recordingStartTime).coerceAtLeast(0L)
-        val previousEnd = recordedGestures.maxOfOrNull { gesture ->
-            gesture.delayFromStart.coerceAtLeast(0L) +
-                (gesture.points.maxOfOrNull { it.t.coerceAtLeast(0L) } ?: 0L)
-        } ?: 0L
-
-        val delayFromStart = if (recordedGestures.isEmpty()) {
-            rawDelay
-        } else {
-            kotlin.math.max(rawDelay, previousEnd + 35L)
-        }.coerceAtMost(24L * 60L * 60L * 1000L)
-
-        val firstP = cleanPoints.first()
+        val delayFromStart = (currentGestureDownTime - recordingStartTime).coerceAtLeast(0L)
+        val firstP = currentPoints.first()
 
         val metrics = resources.displayMetrics
         val screenW = metrics.widthPixels.toFloat().coerceAtLeast(1f)
         val screenH = metrics.heightPixels.toFloat().coerceAtLeast(1f)
 
-        val snapshot = currentSnapshot ?: captureSnapshotFor(
-            firstP.x.toInt(),
-            firstP.y.toInt()
+        val snapshot = currentSnapshot ?: captureSnapshotFor(firstP.x.toInt(), firstP.y.toInt())
+
+        recordedGestures.add(
+            RecordedGesture(
+                delayFromStart = delayFromStart,
+                points = currentPoints.toList(),
+
+                targetText = snapshot?.targetText,
+                targetDesc = snapshot?.targetDesc,
+                targetId = snapshot?.targetId,
+                targetClass = snapshot?.targetClass,
+
+                targetContextText = snapshot?.targetContextText,
+                targetChildText = snapshot?.targetChildText,
+                targetSiblingText = snapshot?.targetSiblingText,
+                targetRoleFlags = snapshot?.targetRoleFlags,
+                targetTreePath = snapshot?.targetTreePath,
+
+                targetLeft = snapshot?.targetLeft ?: -1,
+                targetTop = snapshot?.targetTop ?: -1,
+                targetRight = snapshot?.targetRight ?: -1,
+                targetBottom = snapshot?.targetBottom ?: -1,
+
+                xPercent = snapshot?.xPercent ?: (firstP.x / screenW),
+                yPercent = snapshot?.yPercent ?: (firstP.y / screenH),
+
+                targetWPercent = snapshot?.targetWPercent ?: 0f,
+                targetHPercent = snapshot?.targetHPercent ?: 0f,
+                insideXPercent = snapshot?.insideXPercent ?: 0.5f,
+                insideYPercent = snapshot?.insideYPercent ?: 0.5f,
+                recordedScreenW = snapshot?.recordedScreenW ?: metrics.widthPixels,
+                recordedScreenH = snapshot?.recordedScreenH ?: metrics.heightPixels
+            )
         )
-
-        val newGesture = RecordedGesture(
-            delayFromStart = delayFromStart,
-            points = cleanPoints,
-            targetText = snapshot?.targetText,
-            targetDesc = snapshot?.targetDesc,
-            targetId = snapshot?.targetId,
-            targetClass = snapshot?.targetClass,
-            targetPackage = snapshot?.targetPackage,
-            targetContextText = snapshot?.targetContextText,
-            targetChildText = snapshot?.targetChildText,
-            targetSiblingText = snapshot?.targetSiblingText,
-            targetRoleFlags = snapshot?.targetRoleFlags,
-            targetTreePath = snapshot?.targetTreePath,
-            targetLeft = snapshot?.targetLeft ?: -1,
-            targetTop = snapshot?.targetTop ?: -1,
-            targetRight = snapshot?.targetRight ?: -1,
-            targetBottom = snapshot?.targetBottom ?: -1,
-            xPercent = snapshot?.xPercent ?: (firstP.x / screenW).coerceIn(0f, 1f),
-            yPercent = snapshot?.yPercent ?: (firstP.y / screenH).coerceIn(0f, 1f),
-            targetWPercent = snapshot?.targetWPercent ?: 0f,
-            targetHPercent = snapshot?.targetHPercent ?: 0f,
-            insideXPercent = snapshot?.insideXPercent ?: 0.5f,
-            insideYPercent = snapshot?.insideYPercent ?: 0.5f,
-            recordedScreenW = snapshot?.recordedScreenW ?: metrics.widthPixels,
-            recordedScreenH = snapshot?.recordedScreenH ?: metrics.heightPixels
-        )
-
-        recordedGestures.add(newGesture)
-
-        // Tap, double tap, swipe, long press sab raw gesture ke form me live replay hoga.
-        (context as? FloatingControlService)?.triggerLiveReplaySafe(newGesture)
 
         currentPoints.clear()
         currentSnapshot = null
-        currentGestureDownTime = 0L
-        multiTouchCanceled = false
     }
+
+
 
 
 
@@ -3444,6 +4048,27 @@ fun addAccessibilitySnapshotGesture(snapshot: TargetSnapshot): Boolean {
 
         return false
     }
+
+    fun destroyGlass() {
+        destroyedGlass = true
+        multiTouchCanceled = false
+        currentPoints.clear()
+        currentSnapshot = null
+        recordedGestures.clear()
+        try {
+            setOnTouchListener(null)
+        } catch (_: Exception) {
+        }
+        try {
+            visibility = android.view.View.GONE
+        } catch (_: Exception) {
+        }
+    }
+
+    fun hasRecordedSomething(): Boolean {
+        return currentPoints.isNotEmpty() || recordedGestures.isNotEmpty()
+    }
+
 
     fun getRecordedGestures(): List<RecordedGesture> {
         return recordedGestures.sortedBy { it.delayFromStart }

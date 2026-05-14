@@ -1,0 +1,11 @@
+workflows:
+  android-build:
+    name: AarishAI Android Build
+    environment:
+      java: 17
+    scripts:
+      - name: Build Debug APK
+        script: |
+          gradle assembleDebug
+    artifacts:
+      - app/build/outputs/apk/**/*.apk

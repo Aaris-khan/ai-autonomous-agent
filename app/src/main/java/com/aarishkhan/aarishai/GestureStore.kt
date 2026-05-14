@@ -32,7 +32,14 @@ data class TargetSnapshot(
     val insideXPercent: Float = 0.5f,
     val insideYPercent: Float = 0.5f,
     val recordedScreenW: Int = 0,
-    val recordedScreenH: Int = 0
+    val recordedScreenH: Int = 0,
+    val targetParentText: String? = null,
+    val targetParentId: String? = null,
+    val targetParentClass: String? = null,
+    val targetNodeIndex: Int = -1,
+    val targetClickable: Boolean = false,
+    val targetStableKey: String? = null,
+    val zeroWrongTap: Boolean = true,
 )
 
 data class RecordedGesture(
@@ -59,10 +66,48 @@ data class RecordedGesture(
     val insideXPercent: Float = 0.5f,
     val insideYPercent: Float = 0.5f,
     val recordedScreenW: Int = 0,
-    val recordedScreenH: Int = 0
+    val recordedScreenH: Int = 0,
+    val targetParentText: String? = null,
+    val targetParentId: String? = null,
+    val targetParentClass: String? = null,
+    val targetNodeIndex: Int = -1,
+    val targetClickable: Boolean = false,
+    val targetStableKey: String? = null,
+    val zeroWrongTap: Boolean = true,
 )
 
 object GestureStore {
+    private fun loopModeKey(context: Context): String {
+        return aarishLoopModeKey(getActiveConfigName(context))
+    }
+
+    private fun loopValueKey(context: Context): String {
+        return aarishLoopValueKey(getActiveConfigName(context))
+    }
+
+    private fun aarishNormalizeConfigName(name: String?): String {
+        val cleaned = (name ?: DEFAULT_CONFIG)
+            .replace(Regex("[\r\n\t]+"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(40)
+        return cleaned.ifBlank { DEFAULT_CONFIG }
+    }
+
+    private fun aarishConfigKey(name: String?): String {
+        return CONFIG_KEY_PREFIX + aarishNormalizeConfigName(name)
+    }
+
+    private fun aarishLoopModeKey(name: String?): String {
+        return KEY_LOOP_MODE + "_" + aarishNormalizeConfigName(name)
+    }
+
+    private fun aarishLoopValueKey(name: String?): String {
+        return KEY_LOOP_VALUE + "_" + aarishNormalizeConfigName(name)
+    }
+
+    private var snakeLastCleanupAt = 0L
+
     private const val PREF_NAME = "screen_command_store"
 
     private const val KEY_GESTURES = "recorded_gestures"
@@ -338,7 +383,9 @@ object GestureStore {
                         xPercent = readPercentOrNaN(gestureObject, "xPercent"),
                         yPercent = readPercentOrNaN(gestureObject, "yPercent"),
                         targetWPercent = cleanPercent(gestureObject.optDouble("targetWPercent", 0.0).toFloat()),
-                        targetHPercent = cleanPercent(gestureObject.optDouble("targetHPercent", 0.0).toFloat()),
+                        targetHPercent = cleanPercent(gestureObject.optDouble("targetHPercent",
+                        insideXPercent = gestureObject.optDouble("insideXPercent", 0.5).toFloat().coerceIn(0f, 1f),
+                        insideYPercent = gestureObject.optDouble("insideYPercent", 0.5).toFloat().coerceIn(0f, 1f), 0.0).toFloat()),
                         insideXPercent = cleanPercent(gestureObject.optDouble("insideXPercent", 0.5).toFloat(), 0.5f),
                         insideYPercent = cleanPercent(gestureObject.optDouble("insideYPercent", 0.5).toFloat(), 0.5f),
                         recordedScreenW = gestureObject.optInt("recordedScreenW", 0).coerceAtLeast(0),
@@ -369,12 +416,22 @@ object GestureStore {
     }
 
     fun hasRecording(context: Context): Boolean {
-        return load(context).isNotEmpty()
+        val raw = try {
+            prefs(context).getString(currentGestureKey(context), null)
+        } catch (_: Exception) {
+            null
+        }
+
+        if (raw.isNullOrBlank() || raw.trim() == "[]") return false
+
+        return try {
+            JSONArray(raw).length() > 0
+        } catch (_: Exception) {
+            false
+        }
     }
 
-    fun hasRecordingForConfig(context: Context, configName: String): Boolean {
-        return loadConfig(context, configName).isNotEmpty()
-    }
+
 
     fun totalDuration(context: Context): Long {
         return totalDurationForConfig(context, getActiveConfigName(context))
@@ -621,93 +678,12 @@ object GestureStore {
 
 
 
-    fun clear(context: Context) {
-        val active = getActiveConfigName(context)
-        val p = prefs(context)
-
-        val editor = p.edit()
-            .remove(configKey(active))
-            .remove(nextKeyForName(active))
-            .putString(loopModeKeyForName(active), "ONCE")
-            .putInt(loopValueKeyForName(active), 1)
-
-        // Ghost Link Fix V2:
-        // Active config clear hone par kisi bhi NEXT list me active config bachi ho to usko list se remove karo.
-        getAllConfigNames(context).forEach { configName ->
-            val safeConfigName = normalizeConfigName(configName)
-            if (safeConfigName == active) return@forEach
-
-            val key = nextKeyForName(safeConfigName)
-            val raw = p.getString(key, null)
-            if (!raw.isNullOrBlank()) {
-                val original = splitNextConfigRaw(raw)
-                val cleaned = original
-                    .filter { it != active && hasRecordingForConfig(context, it) }
-                    .distinct()
-
-                if (original != cleaned) {
-                    if (cleaned.isEmpty()) {
-                        editor.remove(key)
-                    } else {
-                        editor.putString(key, cleaned.joinToString(NEXT_LIST_SEPARATOR))
-                    }
-                }
-            }
-        }
-
-        if (active == DEFAULT_CONFIG) {
-            editor.remove(KEY_GESTURES)
-        }
-
-        editor.commit()
-    }
-
-
-    fun saveLoopSettings(context: Context, mode: String, value: Int) {
-        saveLoopSettingsForConfig(context, getActiveConfigName(context), mode, value)
-    }
-
-    fun saveLoopSettingsForConfig(context: Context, configName: String, mode: String, value: Int) {
-        val safeMode = when (mode) {
-            "COUNT", "INFINITE", "TIME" -> mode
-            else -> "ONCE"
-        }
-        val safeValue = when (safeMode) {
-            "COUNT" -> value.coerceIn(1, 9999)
-            "TIME" -> value.coerceIn(1, 1440)
-            "INFINITE" -> 0
-            else -> 1
-        }
-
-        prefs(context).edit()
-            .putString(loopModeKeyForName(configName), safeMode)
-            .putInt(loopValueKeyForName(configName), safeValue)
-            .apply()
-    }
-
     fun getLoopMode(context: Context): String {
         return getLoopModeForConfig(context, getActiveConfigName(context))
     }
 
     fun getLoopValue(context: Context): Int {
         return getLoopValueForConfig(context, getActiveConfigName(context))
-    }
-
-    fun getLoopModeForConfig(context: Context, configName: String): String {
-        val mode = prefs(context).getString(loopModeKeyForName(configName), "ONCE") ?: "ONCE"
-        return when (mode) {
-            "COUNT", "INFINITE", "TIME" -> mode
-            else -> "ONCE"
-        }
-    }
-
-    fun getLoopValueForConfig(context: Context, configName: String): Int {
-        return when (getLoopModeForConfig(context, configName)) {
-            "COUNT" -> prefs(context).getInt(loopValueKeyForName(configName), 10).coerceIn(1, 9999)
-            "TIME" -> prefs(context).getInt(loopValueKeyForName(configName), 5).coerceIn(1, 1440)
-            "INFINITE" -> 0
-            else -> 1
-        }
     }
 
     // AARISH_TAP_ACCURACY_MODE_V1: global offline smart-click strictness switch.
@@ -737,4 +713,577 @@ object GestureStore {
         }
     }
 
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // REPLAY SPEED MULTIPLIER  0.5x / 1x / 2x / 3x
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    private const val KEY_REPLAY_SPEED = "replay_speed_x10"
+    private val SPEED_STEPS = intArrayOf(5, 10, 20, 30)   // ÷10 → actual multiplier
+
+    fun getReplaySpeedFloat(context: android.content.Context): Float {
+        val v = context.getSharedPreferences("aarishai_prefs", android.content.Context.MODE_PRIVATE)
+            .getInt(KEY_REPLAY_SPEED, 10)
+        return if (v in SPEED_STEPS.toList()) v / 10f else 1f
+    }
+
+    fun cycleReplaySpeed(context: android.content.Context): Float {
+        val prefs = context.getSharedPreferences("aarishai_prefs", android.content.Context.MODE_PRIVATE)
+        val cur   = prefs.getInt(KEY_REPLAY_SPEED, 10)
+        val idx   = SPEED_STEPS.indexOf(cur).let { if (it < 0) 0 else it }
+        val next  = SPEED_STEPS[(idx + 1) % SPEED_STEPS.size]
+        prefs.edit().putInt(KEY_REPLAY_SPEED, next).apply()
+        return next / 10f
+    }
+
+    fun getSpeedLabel(context: android.content.Context): String {
+        val f = getReplaySpeedFloat(context)
+        return "⚡" + if (f == f.toLong().toFloat()) "${f.toLong()}x" else "${f}x"
+    }
+
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // INTERVAL RANDOMIZER  (±20 % humanisation)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    private const val KEY_RAND_INTERVAL = "rand_interval_enabled"
+    private val _rndRng = java.util.Random()
+
+    fun isIntervalRandomizerOn(context: android.content.Context): Boolean =
+        context.getSharedPreferences("aarishai_prefs", android.content.Context.MODE_PRIVATE)
+            .getBoolean(KEY_RAND_INTERVAL, false)
+
+    fun setIntervalRandomizer(context: android.content.Context, on: Boolean) {
+        context.getSharedPreferences("aarishai_prefs", android.content.Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_RAND_INTERVAL, on).apply()
+    }
+
+    /** Call this instead of using raw delayMs directly in replay loop */
+    fun humaniseDelay(context: android.content.Context, baseMs: Long): Long {
+        val factor = 0.80 + _rndRng.nextDouble() * 0.40   // 0.80 ‥ 1.20
+        return (baseMs * factor).toLong().coerceAtLeast(16L)
+    }
+
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // VIBRATION FEEDBACK TOGGLE
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    private const val KEY_VIBRO = "click_vibro_enabled"
+
+    fun isVibroEnabled(context: android.content.Context): Boolean =
+        context.getSharedPreferences("aarishai_prefs", android.content.Context.MODE_PRIVATE)
+            .getBoolean(KEY_VIBRO, false)
+
+    fun toggleVibro(context: android.content.Context): Boolean {
+        val prefs = context.getSharedPreferences("aarishai_prefs", android.content.Context.MODE_PRIVATE)
+        prefs.edit().putBoolean(KEY_VIBRO, next).apply()
+        return next
+    }
+
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // SESSION STATS  (in-memory, resets on app kill)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    @Volatile var sessionClickCount: Long = 0L
+        private set
+    @Volatile var sessionStartMs: Long    = 0L
+        private set
+
+    fun markSessionStart()  { sessionStartMs  = System.currentTimeMillis(); sessionClickCount = 0L }
+    fun recordClick()       { sessionClickCount++ }
+    fun sessionDurationSec(): Long = (System.currentTimeMillis() - sessionStartMs) / 1000L
+    fun sessionCPS(): Float  {
+        val secs = sessionDurationSec()
+        return if (secs > 0) sessionClickCount / secs.toFloat() else 0f
+    }
+    fun sessionSummary(): String =
+        "Clicks: $sessionClickCount  |  Time: ${sessionDurationSec()}s  |  CPS: ${"%.1f".format(sessionCPS())}"
+
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // AARISHAI V6 OFFLINE ENGINE SETTINGS
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    private val AARISH_V6_PREFS = "aarishai_prefs"
+    private val AARISH_V6_KEY_RAND_INTERVAL = "aarish_v6_rand_interval"
+    private val AARISH_V6_KEY_MULTI_TAP_COUNT = "aarish_v6_multi_tap_count"
+    private val AARISH_V6_KEY_MULTI_TAP_GAP = "aarish_v6_multi_tap_gap"
+    private val AARISH_V6_KEY_VIBRO = "aarish_v6_vibro_enabled"
+    private val AARISH_V6_RNG = java.util.Random()
+
+    fun aarishV6IsIntervalRandomizerOn(context: android.content.Context): Boolean {
+        return context.getSharedPreferences(AARISH_V6_PREFS, android.content.Context.MODE_PRIVATE)
+            .getBoolean(AARISH_V6_KEY_RAND_INTERVAL, false)
+    }
+
+    fun aarishV6SetIntervalRandomizer(context: android.content.Context, on: Boolean) {
+        context.getSharedPreferences(AARISH_V6_PREFS, android.content.Context.MODE_PRIVATE)
+            .edit().putBoolean(AARISH_V6_KEY_RAND_INTERVAL, on).apply()
+    }
+
+    @Synchronized
+    fun aarishV6HumaniseDelay(context: android.content.Context, baseMs: Long): Long {
+        if (!aarishV6IsIntervalRandomizerOn(context)) return baseMs.coerceAtLeast(0L)
+        val factor = 0.82 + (AARISH_V6_RNG.nextDouble() * 0.36)
+        return (baseMs * factor).toLong().coerceAtLeast(16L)
+    }
+
+    fun aarishV6GetMultiTapCount(context: android.content.Context): Int {
+        return context.getSharedPreferences(AARISH_V6_PREFS, android.content.Context.MODE_PRIVATE)
+            .getInt(AARISH_V6_KEY_MULTI_TAP_COUNT, 1)
+            .coerceIn(1, 10)
+    }
+
+    fun aarishV6SetMultiTapCount(context: android.content.Context, count: Int) {
+        context.getSharedPreferences(AARISH_V6_PREFS, android.content.Context.MODE_PRIVATE)
+            .edit().putInt(AARISH_V6_KEY_MULTI_TAP_COUNT, count.coerceIn(1, 10)).apply()
+    }
+
+    fun aarishV6GetMultiTapGapMs(context: android.content.Context): Long {
+        return context.getSharedPreferences(AARISH_V6_PREFS, android.content.Context.MODE_PRIVATE)
+            .getLong(AARISH_V6_KEY_MULTI_TAP_GAP, 80L)
+            .coerceIn(35L, 500L)
+    }
+
+    fun aarishV6SetMultiTapGapMs(context: android.content.Context, gapMs: Long) {
+        context.getSharedPreferences(AARISH_V6_PREFS, android.content.Context.MODE_PRIVATE)
+            .edit().putLong(AARISH_V6_KEY_MULTI_TAP_GAP, gapMs.coerceIn(35L, 500L)).apply()
+    }
+
+    fun aarishV6IsVibroEnabled(context: android.content.Context): Boolean {
+        return context.getSharedPreferences(AARISH_V6_PREFS, android.content.Context.MODE_PRIVATE)
+            .getBoolean(AARISH_V6_KEY_VIBRO, false)
+    }
+
+    fun aarishV6ToggleVibro(context: android.content.Context): Boolean {
+        val prefs = context.getSharedPreferences(AARISH_V6_PREFS, android.content.Context.MODE_PRIVATE)
+        val next = !prefs.getBoolean(AARISH_V6_KEY_VIBRO, false)
+        prefs.edit().putBoolean(AARISH_V6_KEY_VIBRO, next).apply()
+        return next
+    }
+
+    @Volatile private var aarishV6SessionStartMs: Long = 0L
+    @Volatile private var aarishV6SessionClicks: Long = 0L
+
+    fun aarishV6MarkSessionStart() {
+        aarishV6SessionStartMs = System.currentTimeMillis()
+        aarishV6SessionClicks = 0L
+    }
+
+    fun aarishV6RecordClick(count: Int = 1) {
+        aarishV6SessionClicks += count.coerceAtLeast(1)
+    }
+
+    fun aarishV6SessionDurationSec(): Long {
+        val start = aarishV6SessionStartMs
+        if (start <= 0L) return 0L
+        return ((System.currentTimeMillis() - start) / 1000L).coerceAtLeast(0L)
+    }
+
+    fun aarishV6SessionSummary(): String {
+        val sec = aarishV6SessionDurationSec()
+        val cps = if (sec > 0L) aarishV6SessionClicks / sec.toFloat() else 0f
+        return "Clicks: $aarishV6SessionClicks | Time: ${sec}s | CPS: ${"%.1f".format(cps)}"
+    }
+
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // AARISHAI V7 SAFE OFFLINE ENGINE SETTINGS
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    private const val V7_PREFS = "aarishai_prefs"
+    private const val V7_RAND_INTERVAL = "v7_rand_interval"
+    private const val V7_MULTI_TAP_COUNT = "v7_multi_tap_count"
+    private const val V7_MULTI_TAP_GAP = "v7_multi_tap_gap_ms"
+    private const val V7_VIBRO = "v7_vibro_enabled"
+    private const val V7_DURATION_SCALE_X10 = "v7_duration_scale_x10"
+    private val V7_DURATION_STEPS = intArrayOf(5, 7, 10, 15, 20)
+    private val V7_RNG = java.util.Random()
+
+    fun v7IsIntervalRandomizerOn(context: android.content.Context): Boolean {
+        return context.getSharedPreferences(V7_PREFS, android.content.Context.MODE_PRIVATE)
+            .getBoolean(V7_RAND_INTERVAL, false)
+    }
+
+    fun v7SetIntervalRandomizer(context: android.content.Context, enabled: Boolean) {
+        context.getSharedPreferences(V7_PREFS, android.content.Context.MODE_PRIVATE)
+            .edit().putBoolean(V7_RAND_INTERVAL, enabled).apply()
+    }
+
+    @Synchronized
+    fun v7HumaniseDelay(context: android.content.Context, baseMs: Long): Long {
+        val safeBase = baseMs.coerceAtLeast(0L)
+        if (!v7IsIntervalRandomizerOn(context)) return safeBase
+        val factor = 0.90 + (V7_RNG.nextDouble() * 0.20)
+        return (safeBase * factor).toLong().coerceAtLeast(16L)
+    }
+
+    fun v7GetMultiTapCount(context: android.content.Context): Int {
+        return context.getSharedPreferences(V7_PREFS, android.content.Context.MODE_PRIVATE)
+            .getInt(V7_MULTI_TAP_COUNT, 1)
+            .coerceIn(1, 10)
+    }
+
+    fun v7SetMultiTapCount(context: android.content.Context, count: Int) {
+        context.getSharedPreferences(V7_PREFS, android.content.Context.MODE_PRIVATE)
+            .edit().putInt(V7_MULTI_TAP_COUNT, count.coerceIn(1, 10)).apply()
+    }
+
+    fun v7GetMultiTapGapMs(context: android.content.Context): Long {
+        return context.getSharedPreferences(V7_PREFS, android.content.Context.MODE_PRIVATE)
+            .getLong(V7_MULTI_TAP_GAP, 80L)
+            .coerceIn(35L, 500L)
+    }
+
+    fun v7SetMultiTapGapMs(context: android.content.Context, gapMs: Long) {
+        context.getSharedPreferences(V7_PREFS, android.content.Context.MODE_PRIVATE)
+            .edit().putLong(V7_MULTI_TAP_GAP, gapMs.coerceIn(35L, 500L)).apply()
+    }
+
+    fun v7IsVibroEnabled(context: android.content.Context): Boolean {
+        return context.getSharedPreferences(V7_PREFS, android.content.Context.MODE_PRIVATE)
+            .getBoolean(V7_VIBRO, false)
+    }
+
+    fun v7ToggleVibro(context: android.content.Context): Boolean {
+        val prefs = context.getSharedPreferences(V7_PREFS, android.content.Context.MODE_PRIVATE)
+        val next = !prefs.getBoolean(V7_VIBRO, false)
+        prefs.edit().putBoolean(V7_VIBRO, next).apply()
+        return next
+    }
+
+    fun v7GetGestureDurationScale(context: android.content.Context): Float {
+        val saved = context.getSharedPreferences(V7_PREFS, android.content.Context.MODE_PRIVATE)
+            .getInt(V7_DURATION_SCALE_X10, 10)
+        return if (V7_DURATION_STEPS.contains(saved)) saved / 10f else 1f
+    }
+
+    fun v7CycleGestureDurationScale(context: android.content.Context): Float {
+        val prefs = context.getSharedPreferences(V7_PREFS, android.content.Context.MODE_PRIVATE)
+        val cur = prefs.getInt(V7_DURATION_SCALE_X10, 10)
+        val idx = V7_DURATION_STEPS.indexOf(cur).let { if (it < 0) 2 else it }
+        val next = V7_DURATION_STEPS[(idx + 1) % V7_DURATION_STEPS.size]
+        prefs.edit().putInt(V7_DURATION_SCALE_X10, next).apply()
+        return next / 10f
+    }
+
+    fun v7ScaledDuration(context: android.content.Context, rawMs: Long): Long {
+        return (rawMs * v7GetGestureDurationScale(context)).toLong().coerceIn(55L, 5000L)
+    }
+
+    @Volatile private var v7SessionStartMs: Long = 0L
+    @Volatile private var v7SessionClicks: Long = 0L
+
+    fun v7MarkSessionStart() {
+        v7SessionStartMs = System.currentTimeMillis()
+        v7SessionClicks = 0L
+    }
+
+    fun v7RecordClick(count: Int = 1) {
+        v7SessionClicks += count.coerceAtLeast(1)
+    }
+
+    fun v7SessionDurationSec(): Long {
+        if (v7SessionStartMs <= 0L) return 0L
+        return ((System.currentTimeMillis() - v7SessionStartMs) / 1000L).coerceAtLeast(0L)
+    }
+
+    fun v7SessionSummary(): String {
+        val sec = v7SessionDurationSec()
+        val cps = if (sec > 0L) v7SessionClicks / sec.toFloat() else 0f
+        return "Clicks: $v7SessionClicks | Time: ${sec}s | CPS: ${"%.1f".format(cps)}"
+    }
+
+    const val V7_MAX_MACRO_SLOTS = 5
+
+    private fun v7MacroKey(slot: Int) = "v7_macro_data_$slot"
+    private fun v7MacroNameKey(slot: Int) = "v7_macro_name_$slot"
+    private fun v7MacroModeKey(slot: Int) = "v7_macro_mode_$slot"
+    private fun v7MacroValueKey(slot: Int) = "v7_macro_value_$slot"
+
+    fun v7SaveMacroSlot(context: android.content.Context, slot: Int, name: String): Boolean {
+        if (slot !in 0 until V7_MAX_MACRO_SLOTS) return false
+        val prefs = context.getSharedPreferences(V7_PREFS, android.content.Context.MODE_PRIVATE)
+        val data = exportCurrentRecordingJson(context) ?: return false
+        val loop = getLoopSettings(context)
+        prefs.edit()
+            .putString(v7MacroKey(slot), data)
+            .putString(v7MacroNameKey(slot), name.take(24))
+            .putString(v7MacroModeKey(slot), loop.mode)
+            .putInt(v7MacroValueKey(slot), loop.value)
+            .apply()
+        return true
+    }
+
+    fun v7LoadMacroSlot(context: android.content.Context, slot: Int): Boolean {
+        if (slot !in 0 until V7_MAX_MACRO_SLOTS) return false
+        val prefs = context.getSharedPreferences(V7_PREFS, android.content.Context.MODE_PRIVATE)
+        val data = prefs.getString(v7MacroKey(slot), null) ?: return false
+        importRecordingJson(context, data)
+        setLoopSettings(
+            context,
+            prefs.getString(v7MacroModeKey(slot), "ONCE") ?: "ONCE",
+            prefs.getInt(v7MacroValueKey(slot), 1)
+        )
+        return true
+    }
+
+    fun v7DeleteMacroSlot(context: android.content.Context, slot: Int) {
+        if (slot !in 0 until V7_MAX_MACRO_SLOTS) return
+        context.getSharedPreferences(V7_PREFS, android.content.Context.MODE_PRIVATE)
+            .edit()
+            .remove(v7MacroKey(slot))
+            .remove(v7MacroNameKey(slot))
+            .remove(v7MacroModeKey(slot))
+            .remove(v7MacroValueKey(slot))
+            .apply()
+    }
+
+    fun v7HasMacroSlot(context: android.content.Context, slot: Int): Boolean {
+        if (slot !in 0 until V7_MAX_MACRO_SLOTS) return false
+        return context.getSharedPreferences(V7_PREFS, android.content.Context.MODE_PRIVATE)
+            .contains(v7MacroKey(slot))
+    }
+
+    fun v7MacroName(context: android.content.Context, slot: Int): String {
+        return context.getSharedPreferences(V7_PREFS, android.content.Context.MODE_PRIVATE)
+            .getString(v7MacroNameKey(slot), null) ?: "Slot ${slot + 1}"
+    }
+
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // SUPREME PRECISION SETTINGS — ZERO FALSE POSITIVE MODE
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    private const val SUPREME_PRECISION_PREFS = "aarishai_prefs"
+    private const val KEY_SUPREME_RADIUS = "supreme_precision_radius_percent"
+    private const val KEY_SUPREME_EXACT_RADIUS = "supreme_exact_radius_percent"
+    private const val KEY_SUPREME_STRICT = "supreme_strict_identity_enabled"
+
+    fun getSupremePrecisionRadiusPercent(context: android.content.Context): Float {
+        return context.getSharedPreferences(SUPREME_PRECISION_PREFS, android.content.Context.MODE_PRIVATE)
+            .getFloat(KEY_SUPREME_RADIUS, 0.10f)
+            .coerceIn(0.03f, 0.10f)
+    }
+
+    fun getSupremeExactRadiusPercent(context: android.content.Context): Float {
+        return context.getSharedPreferences(SUPREME_PRECISION_PREFS, android.content.Context.MODE_PRIVATE)
+            .getFloat(KEY_SUPREME_EXACT_RADIUS, 0.05f)
+            .coerceIn(0.02f, 0.06f)
+    }
+
+    fun isSupremeStrictIdentityEnabled(context: android.content.Context): Boolean {
+        return context.getSharedPreferences(SUPREME_PRECISION_PREFS, android.content.Context.MODE_PRIVATE)
+            .getBoolean(KEY_SUPREME_STRICT, true)
+    }
+
+    fun setSupremePrecisionMode(
+        context: android.content.Context,
+        strict: Boolean = true,
+        radiusPercent: Float = 0.10f,
+        exactRadiusPercent: Float = 0.05f
+    ) {
+        context.getSharedPreferences(SUPREME_PRECISION_PREFS, android.content.Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_SUPREME_STRICT, strict)
+            .putFloat(KEY_SUPREME_RADIUS, radiusPercent.coerceIn(0.03f, 0.10f))
+            .putFloat(KEY_SUPREME_EXACT_RADIUS, exactRadiusPercent.coerceIn(0.02f, 0.06f))
+            .apply()
+    }
+
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // ULTRA-STRICT STRUCTURAL PRECISION SETTINGS
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    private const val STRUCTURAL_PRECISION_PREFS = "aarishai_prefs"
+    private const val KEY_STRUCT_RADIUS = "struct_precision_radius_percent"
+    private const val KEY_STRUCT_EXACT_RADIUS = "struct_exact_radius_percent"
+    private const val KEY_STRUCT_SIZE_TOLERANCE = "struct_size_tolerance_percent"
+    private const val KEY_STRUCT_STRICT = "struct_strict_enabled"
+    private const val KEY_STRUCT_ANTI_KEYBOARD = "struct_anti_keyboard_enabled"
+
+    fun getStructuralRadiusPercent(context: android.content.Context): Float {
+        return context.getSharedPreferences(STRUCTURAL_PRECISION_PREFS, android.content.Context.MODE_PRIVATE)
+            .getFloat(KEY_STRUCT_RADIUS, 0.10f)
+            .coerceIn(0.03f, 0.10f)
+    }
+
+    fun getStructuralExactRadiusPercent(context: android.content.Context): Float {
+        return context.getSharedPreferences(STRUCTURAL_PRECISION_PREFS, android.content.Context.MODE_PRIVATE)
+            .getFloat(KEY_STRUCT_EXACT_RADIUS, 0.05f)
+            .coerceIn(0.02f, 0.06f)
+    }
+
+    fun getStructuralSizeTolerancePercent(context: android.content.Context): Float {
+        return context.getSharedPreferences(STRUCTURAL_PRECISION_PREFS, android.content.Context.MODE_PRIVATE)
+            .getFloat(KEY_STRUCT_SIZE_TOLERANCE, 0.10f)
+            .coerceIn(0.03f, 0.15f)
+    }
+
+    fun isStructuralStrictEnabled(context: android.content.Context): Boolean {
+        return context.getSharedPreferences(STRUCTURAL_PRECISION_PREFS, android.content.Context.MODE_PRIVATE)
+            .getBoolean(KEY_STRUCT_STRICT, true)
+    }
+
+    fun isAntiKeyboardGuardEnabled(context: android.content.Context): Boolean {
+        return context.getSharedPreferences(STRUCTURAL_PRECISION_PREFS, android.content.Context.MODE_PRIVATE)
+            .getBoolean(KEY_STRUCT_ANTI_KEYBOARD, true)
+    }
+
+    fun setStructuralPrecisionMode(
+        context: android.content.Context,
+        strict: Boolean = true,
+        antiKeyboard: Boolean = true,
+        radiusPercent: Float = 0.10f,
+        exactRadiusPercent: Float = 0.05f,
+        sizeTolerancePercent: Float = 0.10f
+    ) {
+        context.getSharedPreferences(STRUCTURAL_PRECISION_PREFS, android.content.Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_STRUCT_STRICT, strict)
+            .putBoolean(KEY_STRUCT_ANTI_KEYBOARD, antiKeyboard)
+            .putFloat(KEY_STRUCT_RADIUS, radiusPercent.coerceIn(0.03f, 0.10f))
+            .putFloat(KEY_STRUCT_EXACT_RADIUS, exactRadiusPercent.coerceIn(0.02f, 0.06f))
+            .putFloat(KEY_STRUCT_SIZE_TOLERANCE, sizeTolerancePercent.coerceIn(0.03f, 0.15f))
+            .apply()
+    }
+
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // DEEP CONNECTIVITY / CROSS-FILE SYNERGY STATE
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    private const val SYNERGY_PREFS = "aarishai_prefs"
+    private const val KEY_SYNERGY_PLAYBACK_ACTIVE = "synergy_playback_active"
+    private const val KEY_SYNERGY_LAST_UI_CLEANUP_AT = "synergy_last_ui_cleanup_at"
+    private const val KEY_SYNERGY_BLOCKED_UNTIL = "synergy_blocked_until"
+    private const val KEY_SYNERGY_LAST_COMMAND = "synergy_last_command"
+
+    fun setSynergyPlaybackActive(context: android.content.Context, active: Boolean) {
+        context.getSharedPreferences(SYNERGY_PREFS, android.content.Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_SYNERGY_PLAYBACK_ACTIVE, active)
+            .putLong(KEY_SYNERGY_LAST_COMMAND, System.currentTimeMillis())
+            .apply()
+    }
+
+    fun isSynergyPlaybackActive(context: android.content.Context): Boolean {
+        return context.getSharedPreferences(SYNERGY_PREFS, android.content.Context.MODE_PRIVATE)
+            .getBoolean(KEY_SYNERGY_PLAYBACK_ACTIVE, false)
+    }
+
+    fun markSynergyUiCleanup(context: android.content.Context) {
+        context.getSharedPreferences(SYNERGY_PREFS, android.content.Context.MODE_PRIVATE)
+            .edit()
+            .putLong(KEY_SYNERGY_LAST_UI_CLEANUP_AT, System.currentTimeMillis())
+            .apply()
+    }
+
+    fun markSynergyBlockedFor(context: android.content.Context, ms: Long) {
+        val until = android.os.SystemClock.uptimeMillis() + ms.coerceIn(100L, 5000L)
+        context.getSharedPreferences(SYNERGY_PREFS, android.content.Context.MODE_PRIVATE)
+            .edit()
+            .putLong(KEY_SYNERGY_BLOCKED_UNTIL, until)
+            .apply()
+    }
+
+    fun isSynergyBlocked(context: android.content.Context): Boolean {
+        val until = context.getSharedPreferences(SYNERGY_PREFS, android.content.Context.MODE_PRIVATE)
+            .getLong(KEY_SYNERGY_BLOCKED_UNTIL, 0L)
+        return android.os.SystemClock.uptimeMillis() < until
+    }
+
+    fun clearSynergyState(context: android.content.Context) {
+        context.getSharedPreferences(SYNERGY_PREFS, android.content.Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_SYNERGY_PLAYBACK_ACTIVE, false)
+            .putLong(KEY_SYNERGY_BLOCKED_UNTIL, 0L)
+            .apply()
+    }
+
+
+    fun hasRecordingForConfig(context: Context, configName: String): Boolean {
+        val raw = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .getString(aarishConfigKey(configName), null)
+        if (raw.isNullOrBlank() || raw.trim() == "[]") return false
+        return try {
+            JSONArray(raw).length() > 0
+        } catch (_: Exception) {
+            raw.isNotBlank()
+        }
+    }
+
+    fun saveLoopSettingsForConfig(context: Context, configName: String, mode: String, value: Int): Boolean {
+        val safeMode = when (mode) {
+            "COUNT", "INFINITE", "TIME" -> mode
+            else -> "ONCE"
+        }
+        val safeValue = when (safeMode) {
+            "COUNT" -> value.coerceIn(1, 999)
+            "TIME" -> value.coerceIn(1, 240)
+            "INFINITE" -> 0
+            else -> 1
+        }
+
+        return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(aarishLoopModeKey(configName), safeMode)
+            .putInt(aarishLoopValueKey(configName), safeValue)
+            .commit()
+    }
+
+    fun getLoopModeForConfig(context: Context, configName: String): String {
+        val mode = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .getString(aarishLoopModeKey(configName), "ONCE") ?: "ONCE"
+        return when (mode) {
+            "COUNT", "INFINITE", "TIME" -> mode
+            else -> "ONCE"
+        }
+    }
+
+    fun getLoopValueForConfig(context: Context, configName: String): Int {
+        val p = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        return when (getLoopModeForConfig(context, configName)) {
+            "COUNT" -> p.getInt(aarishLoopValueKey(configName), 10).coerceIn(1, 999)
+            "TIME" -> p.getInt(aarishLoopValueKey(configName), 5).coerceIn(1, 240)
+            "INFINITE" -> 0
+            else -> 1
+        }
+    }
+
+
+    fun clear(context: Context) {
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove(currentGestureKey(context))
+            .putString(loopModeKey(context), "ONCE")
+            .putInt(loopValueKey(context), 1)
+            .commit()
+    }
+
+
+    fun saveLoopSettings(context: Context, mode: String, value: Int): Boolean {
+        val safeMode = when (mode) {
+            "COUNT", "INFINITE", "TIME" -> mode
+            else -> "ONCE"
+        }
+        val safeValue = when (safeMode) {
+            "COUNT" -> value.coerceIn(1, 999)
+            "TIME" -> value.coerceIn(1, 240)
+            "INFINITE" -> 0
+            else -> 1
+        }
+
+        return context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(loopModeKey(context), safeMode)
+            .putInt(loopValueKey(context), safeValue)
+            .commit()
+    }
+
+
+    private fun aarishStableConfigKey(name: String?): String {
+        val raw = (name ?: "Default Config").trim().ifBlank { "Default Config" }
+        val clean = raw
+            .replace(Regex("[\\r\\n\\t]+"), " ")
+            .replace(Regex("\\s+"), " ")
+            .take(40)
+            .ifBlank { "Default Config" }
+        val hash = raw.hashCode().toUInt().toString(16)
+        return clean + "_" + hash
+    }
 }
