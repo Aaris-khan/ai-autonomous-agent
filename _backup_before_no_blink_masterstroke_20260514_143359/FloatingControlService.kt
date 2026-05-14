@@ -2885,12 +2885,9 @@ private fun clearSavedRecordingFromPanel() {
         return false
     }
 
-
-    // AARISH_HIDE_AFTER_UP_NO_BLINK_FINAL_V3
-    // ghost=true  -> replay ke time Glass + Panel invisible, touch pass-through.
-    // ghost=false -> replay complete ke baad Glass + Panel visible.
     private fun aarishSetGlassGhostModeSafe(ghost: Boolean): Boolean {
         if (!::windowManager.isInitialized) return false
+
         val glass = captureView ?: return false
         val params = glass.layoutParams as? WindowManager.LayoutParams ?: return false
 
@@ -2901,35 +2898,22 @@ private fun clearSavedRecordingFromPanel() {
         }
 
         if (params.flags == newFlags && lastGhostState == ghost) return true
+
         params.flags = newFlags
 
-        if (ghost) {
-            glass.visibility = View.INVISIBLE
-            glass.alpha = 0f
-            glass.setBackgroundColor(Color.TRANSPARENT)
-            panelView?.visibility = View.INVISIBLE
-        } else {
-            glass.visibility = View.VISIBLE
-            glass.alpha = 1f
-            glass.setBackgroundColor(Color.argb(26, 0, 200, 0))
-            panelView?.visibility = View.VISIBLE
-        }
+        // Ghost mode me glass pass-through + transparent; solid mode me halka green record glass.
+        glass.setBackgroundColor(if (ghost) Color.TRANSPARENT else Color.argb(26, 0, 200, 0))
 
         return try {
             windowManager.updateViewLayout(glass, params)
             lastGhostState = ghost
-
-            if (!ghost && instance === this@FloatingControlService && isRecording) {
-                restorePanelUI()
-            }
-
             true
         } catch (_: Throwable) {
             false
         }
     }
 
-private fun aarishResetLiveReplayStateSafe(forceSolid: Boolean = true) {
+    private fun aarishResetLiveReplayStateSafe(forceSolid: Boolean = true) {
         liveReplaySerial++
         liveReplayActive = false
         liveReplayQueue.clear()
@@ -2948,7 +2932,6 @@ private fun aarishResetLiveReplayStateSafe(forceSolid: Boolean = true) {
             aarishSetGlassGhostModeSafe(false)
         }
     }
-
 
     private fun drainNextLiveReplaySafe() {
         handler.post {
@@ -2969,7 +2952,6 @@ private fun aarishResetLiveReplayStateSafe(forceSolid: Boolean = true) {
             liveReplaySerial = serial
             liveReplayActive = true
 
-            // Finger UP ke baad replay start: Glass + Panel invisible.
             if (!aarishSetGlassGhostModeSafe(true)) {
                 aarishResetLiveReplayStateSafe(forceSolid = false)
                 return@post
@@ -2983,23 +2965,23 @@ private fun aarishResetLiveReplayStateSafe(forceSolid: Boolean = true) {
                 if (finished) return
                 finished = true
 
-                if (liveReplayQueue.isNotEmpty()) {
-                    // Queue me aur tap hain: beech me visible mat karo, warna blink hoga.
-                    handler.postDelayed({
-                        if (instance !== this@FloatingControlService || !isRecording || AutoActionService.isPlaying()) {
-                            aarishResetLiveReplayStateSafe()
-                            return@postDelayed
-                        }
+                restoreLiveReplayGlassSafe(serial)
+
+                handler.postDelayed({
+                    if (instance !== this@FloatingControlService || !isRecording || AutoActionService.isPlaying()) {
+                        aarishResetLiveReplayStateSafe()
+                        return@postDelayed
+                    }
+
+                    if (liveReplayQueue.isNotEmpty()) {
                         drainNextLiveReplaySafe()
-                    }, 35L)
-                } else {
-                    // Sab replay complete: abhi hi Glass + Panel wapas visible.
-                    restoreLiveReplayGlassSafe(serial)
-                    liveReplayQueueDraining = false
-                }
+                    } else {
+                        liveReplayQueueDraining = false
+                    }
+                }, 62L)
             }
 
-            val settleDelay = if (!localGestureHasRealMovement(gesture) && duration <= 240L) 40L else 30L
+            val settleDelay = if (!localGestureHasRealMovement(gesture) && duration <= 240L) 42L else 34L
 
             handler.postDelayed({
                 if (serial != liveReplaySerial || instance !== this@FloatingControlService || !isRecording) {
@@ -3009,6 +2991,7 @@ private fun aarishResetLiveReplayStateSafe(forceSolid: Boolean = true) {
 
                 semanticClickMuteUntil = android.os.SystemClock.uptimeMillis() + duration + 1400L
 
+                // AARISH_LIVE_REPLAY_SEMANTIC_MUTE_V1
                 AutoActionService.playSingleLiveGestureSafe(gesture) {
                     handler.postDelayed({
                         finishAndContinue()
@@ -3023,7 +3006,6 @@ private fun aarishResetLiveReplayStateSafe(forceSolid: Boolean = true) {
             }, watchdogMs)
         }
     }
-
 
     fun triggerLiveReplaySafe(gesture: RecordedGesture) {
         if (instance !== this@FloatingControlService) return
@@ -3063,29 +3045,20 @@ private fun aarishResetLiveReplayStateSafe(forceSolid: Boolean = true) {
             if (!liveReplayQueueDraining) {
                 liveReplayQueueDraining = true
 
-                // FINAL LOGIC:
-                // Short tap me 550ms wait rakha hai taaki double/triple tap pehle capture ho jaye.
-                // Swipe/long-press me delay 34ms rakha hai taaki feel smooth rahe.
-                val isShortTap = !localGestureHasRealMovement(gesture) && liveReplayDurationMs(gesture) <= 240L
-                val drainDelay = if (isShortTap) 550L else 34L
+                val firstDelay = if (!localGestureHasRealMovement(gesture) && liveReplayDurationMs(gesture) <= 240L) {
+                    135L
+                } else {
+                    34L
+                }
 
                 handler.postDelayed({
-                    if (instance !== this@FloatingControlService || !isRecording || AutoActionService.isPlaying()) {
-                        aarishResetLiveReplayStateSafe()
-                        return@postDelayed
-                    }
-
-                    if (liveReplayQueue.isNotEmpty()) {
-                        drainNextLiveReplaySafe()
-                    } else {
-                        liveReplayQueueDraining = false
-                    }
-                }, drainDelay)
+                    drainNextLiveReplaySafe()
+                }, firstDelay)
             }
         }
     }
 
-private fun triggerLiveSystemActionSafe(actionType: Int) {
+    private fun triggerLiveSystemActionSafe(actionType: Int) {
         if (instance !== this@FloatingControlService) return
         if (!isRecording || AutoActionService.isPlaying()) return
 
