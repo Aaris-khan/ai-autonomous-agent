@@ -160,7 +160,7 @@ class MainActivity : Activity() {
         root.put("exportedAt", System.currentTimeMillis())
         root.put("packageName", packageName)
 
-        prefsLoop@ for ((key, value) in prefs.all) {
+        for ((key, value) in prefs.all) {
             val item = JSONObject()
             when (value) {
                 is String -> {
@@ -189,7 +189,7 @@ class MainActivity : Activity() {
                     value.filterIsInstance<String>().forEach { arr.put(it) }
                     item.put("value", arr)
                 }
-                else -> continue@prefsLoop
+                else -> continue
             }
             data.put(key, item)
         }

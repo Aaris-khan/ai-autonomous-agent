@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">Aarish AI</string>
-    <string name="accessibility_service_description">Screen Command automatic tap, swipe aur long press perform karne ke liye enable karein.</string>
+    <string name="app_name">AarishAI</string>
+    <string name="accessibility_service_description">AarishAI Screen Command automation service</string>
 </resources>

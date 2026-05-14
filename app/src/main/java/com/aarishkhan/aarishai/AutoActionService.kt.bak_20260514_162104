@@ -3949,7 +3949,6 @@ private fun captureTargetSnapshotInternal(
 
 
     // AARISH_ADVANCED_BLINK_STRIKE_GHOST_ENGINE_V2
-
     private fun aarishBlinkStrikeDispatchGesture(gesture: RecordedGesture, onDone: () -> Unit) {
         val main = android.os.Handler(android.os.Looper.getMainLooper())
         val finished = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -3969,7 +3968,7 @@ private fun captureTargetSnapshotInternal(
             val raw0 = gesture.points
                 .filter { p ->
                     !p.x.isNaN() && !p.x.isInfinite() &&
-                        !p.y.isNaN() && !p.y.isInfinite()
+                    !p.y.isNaN() && !p.y.isInfinite()
                 }
                 .sortedBy { it.t.coerceAtLeast(0L) }
 
@@ -3995,9 +3994,7 @@ private fun captureTargetSnapshotInternal(
                 raw0
             } else {
                 val step = kotlin.math.ceil(raw0.size / 180.0).toInt().coerceAtLeast(1)
-                raw0.filterIndexed { index, _ ->
-                    index == 0 || index == raw0.lastIndex || index % step == 0
-                }
+                raw0.filterIndexed { index, _ -> index == 0 || index == raw0.lastIndex || index % step == 0 }
             }
 
             val maxX = (resources.displayMetrics.widthPixels.toFloat() - 2f).coerceAtLeast(2f)
@@ -4036,7 +4033,7 @@ private fun captureTargetSnapshotInternal(
             val endT = raw0.last().t.coerceAtLeast(startT)
             val duration = (endT - startT).coerceIn(55L, 600000L)
 
-            // Long tap ko chunks me dispatch karo.
+            // AARISH_LIVE_LONG_PRESS_CHUNK_FIX_V1
             if (!movement && duration > 59000L) {
                 dispatchLongPressChunksSafe(startX, startY, duration, null) {
                     finishOnce()
@@ -4044,17 +4041,12 @@ private fun captureTargetSnapshotInternal(
                 return
             }
 
-            // SMART FIX:
-            // Moving/swipe live replay me 59000ms se zyada duration direct StrokeDescription
-            // me dena unsafe hai. Clamp karo, warna live replay skip/crash/stuck ho sakta hai.
-            val safeDuration = duration.coerceAtMost(59000L)
-
             val desc = android.accessibilityservice.GestureDescription.Builder()
                 .addStroke(
                     android.accessibilityservice.GestureDescription.StrokeDescription(
                         path,
                         0L,
-                        safeDuration
+                        duration
                     )
                 )
                 .build()
@@ -4080,10 +4072,9 @@ private fun captureTargetSnapshotInternal(
 
             main.postDelayed({
                 finishOnce()
-            }, (safeDuration + 1650L).coerceAtMost(610000L))
+            }, (duration + 1650L).coerceAtMost(610000L))
         } catch (_: Throwable) {
             finishOnce()
         }
     }
-
 }
