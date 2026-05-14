@@ -4,16 +4,14 @@ workflows:
     environment:
       java: 17
     scripts:
-      - name: Smart Build Debug APK
+      - name: Build Debug APK
         script: |
-          # Agar gradlew file hai, toh usko execute permission do
-          if [ -f "gradlew" ]; then
-            chmod +x gradlew
-            ./gradlew assembleDebug
-          else
-            # Agar gradlew nahi mila, toh direct system gradle use karo
-            echo "⚠️ gradlew not found, using system gradle..."
-            gradle assembleDebug
+          set -e
+          if [ ! -f ./gradlew ]; then
+            echo "gradlew missing; generating Gradle wrapper..."
+            gradle wrapper --gradle-version 8.0.2
           fi
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon
     artifacts:
       - app/build/outputs/apk/**/*.apk
