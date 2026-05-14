@@ -44,8 +44,8 @@ class AutoActionService : AccessibilityService() {
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 val ok = try {
                     when (actionType) {
-                        1 -> svc.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
-                        2 -> svc.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_RECENTS)
+                        1 -> svc.performGlobalAction(GLOBAL_ACTION_BACK)
+                        2 -> svc.performGlobalAction(GLOBAL_ACTION_RECENTS)
                         else -> false
                     }
                 } catch (_: Throwable) {

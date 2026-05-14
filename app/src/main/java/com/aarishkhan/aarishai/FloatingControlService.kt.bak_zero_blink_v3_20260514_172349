@@ -2927,8 +2927,8 @@ private fun clearSavedRecordingFromPanel() {
 
 
     // AARISH_HIDE_AFTER_UP_NO_BLINK_FINAL_V3
-    // ghost=true  -> replay ke time Glass + Panel touch-pass-through; visual same.
-    // ghost=false -> replay complete ke baad Glass + Panel normal touch capture.
+    // ghost=true  -> replay ke time Glass + Panel invisible, touch pass-through.
+    // ghost=false -> replay complete ke baad Glass + Panel visible.
 
 
 private fun aarishResetLiveReplayStateSafe(forceSolid: Boolean = true) {
@@ -2995,90 +2995,59 @@ private fun aarishSetGlassGhostModeSafe(ghost: Boolean): Boolean {
     val notTouchable = android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
     val notFocusable = android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
 
-    fun targetFlags(oldFlags: Int): Int {
-        return if (ghost) {
-            oldFlags or notTouchable or notFocusable
-        } else {
-            (oldFlags and notTouchable.inv()) or notFocusable
-        }
-    }
-
-    fun isVisuallySolid(view: android.view.View?): Boolean {
-        if (view == null) return true
-        return try {
-            view.visibility == android.view.View.VISIBLE && view.alpha >= 0.99f
-        } catch (_: Throwable) {
-            true
-        }
-    }
-
-    fun ensureVisuallySolidOnlyIfBroken(view: android.view.View?) {
+    fun clearPressedState(view: android.view.View?) {
         if (view == null) return
         try {
-            if (view.visibility != android.view.View.VISIBLE) {
-                view.visibility = android.view.View.VISIBLE
-            }
-            if (view.alpha < 0.99f) {
-                view.alpha = 1f
-            }
-            view.isFocusable = false
+            view.isPressed = false
+            view.isSelected = false
+            view.isActivated = false
             view.clearFocus()
-        } catch (_: Throwable) {}
-    }
-
-    fun clearPressedOnly(view: android.view.View?) {
-        if (view == null) return
-        try {
-            if (view.isPressed) view.isPressed = false
             view.jumpDrawablesToCurrentState()
         } catch (_: Throwable) {}
 
         if (view is android.view.ViewGroup) {
             for (i in 0 until view.childCount) {
-                clearPressedOnly(view.getChildAt(i))
+                clearPressedState(view.getChildAt(i))
             }
         }
     }
 
-    val newGlassFlags = targetFlags(glassParams.flags)
-    val newPanelFlags = panelLp?.let { targetFlags(it.flags) }
-
-    val glassNeedsUpdate = glassParams.flags != newGlassFlags
-    val panelNeedsUpdate =
-        panel != null &&
-            panelLp != null &&
-            panel.parent != null &&
-            newPanelFlags != null &&
-            panelLp.flags != newPanelFlags
-
-    val visualNeedsRepair = !isVisuallySolid(glass) || !isVisuallySolid(panel)
-
-    // ZERO-BLINK MASTER RULE:
-    // State already same ho to WindowManager.updateViewLayout() bilkul mat chalao.
-    // Repeated updateViewLayout hi kuch phones me micro flicker/compositor jhatka deta hai.
-    if (lastGhostState == ghost && !glassNeedsUpdate && !panelNeedsUpdate && !visualNeedsRepair) {
-        return true
+    fun forceVisibleStable(view: android.view.View?) {
+        if (view == null) return
+        try {
+            view.visibility = android.view.View.VISIBLE
+            view.alpha = 1f
+            view.isEnabled = true
+            view.isClickable = true
+            view.isFocusable = false
+            view.importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+        } catch (_: Throwable) {}
     }
 
     val oldGlassFlags = glassParams.flags
     val oldPanelFlags = panelLp?.flags
 
     return try {
-        clearPressedOnly(panel)
-        clearPressedOnly(glass)
+        clearPressedState(panel)
+        clearPressedState(glass)
 
-        // No invisible. No alpha 0. No color change.
-        // Sirf agar kisi purane patch ne view tod diya ho tabhi repair.
-        ensureVisuallySolidOnlyIfBroken(glass)
-        ensureVisuallySolidOnlyIfBroken(panel)
+        // ZERO-BLINK RULE:
+        // View ko invisible/visible ya alpha 0/1 mat karo.
+        // Pixels same rahenge. Sirf touch pass-through toggle hoga.
+        forceVisibleStable(glass)
+        forceVisibleStable(panel)
 
-        if (glassNeedsUpdate) {
-            glassParams.flags = newGlassFlags
-            windowManager.updateViewLayout(glass, glassParams)
+        if (ghost) {
+            glassParams.flags = glassParams.flags or notTouchable or notFocusable
+            panelLp?.let { it.flags = it.flags or notTouchable or notFocusable }
+        } else {
+            glassParams.flags = (glassParams.flags and notTouchable.inv()) or notFocusable
+            panelLp?.let { it.flags = (it.flags and notTouchable.inv()) or notFocusable }
         }
 
-        if (panelNeedsUpdate && panel != null && panelLp != null && newPanelFlags != null) {
-            panelLp.flags = newPanelFlags
+        windowManager.updateViewLayout(glass, glassParams)
+
+        if (panel != null && panelLp != null && panel.parent != null) {
             windowManager.updateViewLayout(panel, panelLp)
         }
 
@@ -3100,7 +3069,6 @@ private fun aarishSetGlassGhostModeSafe(ghost: Boolean): Boolean {
         false
     }
 }
-
 
 
 private fun drainNextLiveReplaySafe() {

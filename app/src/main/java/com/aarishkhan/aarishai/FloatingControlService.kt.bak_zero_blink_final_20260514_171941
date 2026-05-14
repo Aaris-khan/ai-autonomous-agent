@@ -2927,8 +2927,8 @@ private fun clearSavedRecordingFromPanel() {
 
 
     // AARISH_HIDE_AFTER_UP_NO_BLINK_FINAL_V3
-    // ghost=true  -> replay ke time Glass + Panel touch-pass-through; visual same.
-    // ghost=false -> replay complete ke baad Glass + Panel normal touch capture.
+    // ghost=true  -> replay ke time Glass + Panel invisible, touch pass-through.
+    // ghost=false -> replay complete ke baad Glass + Panel visible.
 
 
 private fun aarishResetLiveReplayStateSafe(forceSolid: Boolean = true) {
@@ -2990,118 +2990,157 @@ private fun aarishSetGlassGhostModeSafe(ghost: Boolean): Boolean {
     val glassParams = glass.layoutParams as? android.view.WindowManager.LayoutParams ?: return false
 
     val panel = panelView
-    val panelLp = (panel?.layoutParams as? android.view.WindowManager.LayoutParams) ?: panelParams
+    val panelLp = panel?.layoutParams as? android.view.WindowManager.LayoutParams ?: panelParams
 
     val notTouchable = android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
     val notFocusable = android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
 
-    fun targetFlags(oldFlags: Int): Int {
-        return if (ghost) {
-            oldFlags or notTouchable or notFocusable
-        } else {
-            (oldFlags and notTouchable.inv()) or notFocusable
-        }
-    }
-
-    fun isVisuallySolid(view: android.view.View?): Boolean {
-        if (view == null) return true
-        return try {
-            view.visibility == android.view.View.VISIBLE && view.alpha >= 0.99f
-        } catch (_: Throwable) {
-            true
-        }
-    }
-
-    fun ensureVisuallySolidOnlyIfBroken(view: android.view.View?) {
+    fun clearButtonState(view: android.view.View?) {
         if (view == null) return
         try {
-            if (view.visibility != android.view.View.VISIBLE) {
-                view.visibility = android.view.View.VISIBLE
-            }
-            if (view.alpha < 0.99f) {
-                view.alpha = 1f
-            }
-            view.isFocusable = false
+            view.isPressed = false
+            view.isSelected = false
+            view.isActivated = false
             view.clearFocus()
-        } catch (_: Throwable) {}
-    }
-
-    fun clearPressedOnly(view: android.view.View?) {
-        if (view == null) return
-        try {
-            if (view.isPressed) view.isPressed = false
             view.jumpDrawablesToCurrentState()
         } catch (_: Throwable) {}
 
         if (view is android.view.ViewGroup) {
             for (i in 0 until view.childCount) {
-                clearPressedOnly(view.getChildAt(i))
+                clearButtonState(view.getChildAt(i))
             }
         }
     }
 
-    val newGlassFlags = targetFlags(glassParams.flags)
-    val newPanelFlags = panelLp?.let { targetFlags(it.flags) }
+    fun setTreeEnabled(view: android.view.View?, enabled: Boolean) {
+        if (view == null) return
+        try {
+            view.isEnabled = enabled
+            view.isClickable = enabled
+            view.isFocusable = enabled
+            view.importantForAccessibility =
+                if (enabled) android.view.View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+                else android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        } catch (_: Throwable) {}
 
-    val glassNeedsUpdate = glassParams.flags != newGlassFlags
-    val panelNeedsUpdate =
-        panel != null &&
-            panelLp != null &&
-            panel.parent != null &&
-            newPanelFlags != null &&
-            panelLp.flags != newPanelFlags
+        if (view is android.view.ViewGroup) {
+            for (i in 0 until view.childCount) {
+                setTreeEnabled(view.getChildAt(i), enabled)
+            }
+        }
+    }
 
-    val visualNeedsRepair = !isVisuallySolid(glass) || !isVisuallySolid(panel)
+    fun updateSafe(view: android.view.View?, lp: android.view.WindowManager.LayoutParams?) {
+        if (view == null || lp == null || view.parent == null) return
+        try { windowManager.updateViewLayout(view, lp) } catch (_: Throwable) {}
+    }
 
-    // ZERO-BLINK MASTER RULE:
-    // State already same ho to WindowManager.updateViewLayout() bilkul mat chalao.
-    // Repeated updateViewLayout hi kuch phones me micro flicker/compositor jhatka deta hai.
-    if (lastGhostState == ghost && !glassNeedsUpdate && !panelNeedsUpdate && !visualNeedsRepair) {
+    val targetVisibility = if (ghost) android.view.View.INVISIBLE else android.view.View.VISIBLE
+    val targetAlpha = if (ghost) 0f else 1f
+
+    val glassTouchOk = ((glassParams.flags and notTouchable) != 0) == ghost
+    val panelTouchOk = panelLp == null || ((panelLp.flags and notTouchable) != 0) == ghost
+    val glassVisualOk = glass.visibility == targetVisibility && glass.alpha == targetAlpha && glass.isEnabled == !ghost
+    val panelVisualOk = panel == null || (
+        panel.visibility == targetVisibility &&
+            panel.alpha == targetAlpha &&
+            panel.isEnabled == !ghost
+        )
+
+    if (lastGhostState == ghost && glassTouchOk && panelTouchOk && glassVisualOk && panelVisualOk) {
         return true
     }
 
-    val oldGlassFlags = glassParams.flags
-    val oldPanelFlags = panelLp?.flags
-
     return try {
-        clearPressedOnly(panel)
-        clearPressedOnly(glass)
+        if (ghost) {
+            // Replay start:
+            // Panel ko sabse pehle non-touchable + invisible banao,
+            // warna synthetic tap panel/icons par lag sakta hai.
+            panelLp?.let {
+                it.flags = it.flags or notTouchable or notFocusable
+            }
 
-        // No invisible. No alpha 0. No color change.
-        // Sirf agar kisi purane patch ne view tod diya ho tabhi repair.
-        ensureVisuallySolidOnlyIfBroken(glass)
-        ensureVisuallySolidOnlyIfBroken(panel)
+            panel?.let {
+                clearButtonState(it)
+                setTreeEnabled(it, false)
+                it.alpha = 0f
+                it.visibility = android.view.View.INVISIBLE
+                updateSafe(it, panelLp)
+            }
 
-        if (glassNeedsUpdate) {
-            glassParams.flags = newGlassFlags
-            windowManager.updateViewLayout(glass, glassParams)
-        }
+            glassParams.flags = glassParams.flags or notTouchable or notFocusable
+            clearButtonState(glass)
+            setTreeEnabled(glass, false)
+            glass.alpha = 0f
+            glass.visibility = android.view.View.INVISIBLE
+            glass.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            updateSafe(glass, glassParams)
+        } else {
+            // Replay complete:
+            // Green glass wapas stable. Button state clean.
+            glassParams.flags = (glassParams.flags and notTouchable.inv()) or notFocusable
+            setTreeEnabled(glass, true)
+            clearButtonState(glass)
+            glass.setBackgroundColor(android.graphics.Color.argb(26, 0, 200, 0))
+            glass.visibility = android.view.View.VISIBLE
+            glass.alpha = 1f
+            updateSafe(glass, glassParams)
 
-        if (panelNeedsUpdate && panel != null && panelLp != null && newPanelFlags != null) {
-            panelLp.flags = newPanelFlags
-            windowManager.updateViewLayout(panel, panelLp)
+            panelLp?.let {
+                it.flags = (it.flags and notTouchable.inv()) or notFocusable
+            }
+
+            panel?.let {
+                setTreeEnabled(it, true)
+                clearButtonState(it)
+                it.visibility = android.view.View.VISIBLE
+                it.alpha = 1f
+                updateSafe(it, panelLp)
+            }
         }
 
         lastGhostState = ghost
+
+        if (!ghost && instance === this@FloatingControlService && isRecording) {
+            handler.post {
+                if (
+                    instance === this@FloatingControlService &&
+                    isRecording &&
+                    !liveReplayActive &&
+                    !liveReplayQueueDraining
+                ) {
+                    restorePanelUI()
+                    panelView?.let { clearButtonState(it) }
+                }
+            }
+        }
+
         true
     } catch (_: Throwable) {
         try {
-            glassParams.flags = oldGlassFlags
-            windowManager.updateViewLayout(glass, glassParams)
-        } catch (_: Throwable) {}
+            glassParams.flags = (glassParams.flags and notTouchable.inv()) or notFocusable
+            panelLp?.let { it.flags = (it.flags and notTouchable.inv()) or notFocusable }
 
-        try {
-            if (panel != null && panelLp != null && panel.parent != null && oldPanelFlags != null) {
-                panelLp.flags = oldPanelFlags
-                windowManager.updateViewLayout(panel, panelLp)
+            setTreeEnabled(glass, true)
+            clearButtonState(glass)
+            glass.setBackgroundColor(android.graphics.Color.argb(26, 0, 200, 0))
+            glass.visibility = android.view.View.VISIBLE
+            glass.alpha = 1f
+            updateSafe(glass, glassParams)
+
+            panel?.let {
+                setTreeEnabled(it, true)
+                clearButtonState(it)
+                it.visibility = android.view.View.VISIBLE
+                it.alpha = 1f
+                updateSafe(it, panelLp)
             }
-        } catch (_: Throwable) {}
 
+            lastGhostState = false
+        } catch (_: Throwable) {}
         false
     }
 }
-
-
 
 private fun drainNextLiveReplaySafe() {
         handler.post {
