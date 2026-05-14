@@ -17,7 +17,6 @@ class AutoActionService : AccessibilityService() {
 
     companion object {
 
-        // AARISH_BLINK_STRIKE_AAS_BRIDGE_V2
         fun playSingleLiveGestureSafe(gesture: RecordedGesture, onDone: () -> Unit) {
             val svc = instance
             if (svc == null) {
@@ -58,8 +57,7 @@ class AutoActionService : AccessibilityService() {
             }
         }
 
-
-        private var instance: AutoActionService? = null
+        @Volatile private var instance: AutoActionService? = null
 
         fun playNow(context: Context): Boolean {
             val service = instance
@@ -105,7 +103,7 @@ class AutoActionService : AccessibilityService() {
         }
 
         // AARISH_PRESS_REPLAY_PRO_V2_START
-        // AARISH_PRESS_REPLAY_PRO_V2_END
+H_PRESS_REPLAY_PRO_V2_END
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -483,7 +481,7 @@ class AutoActionService : AccessibilityService() {
             }
         }
     }
-    // AARIS        // AARISH_PRESS_REPLAY_PRO_V2_END
+    // AARISH_PRESS_REPLAY_PRO_V2_END
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -3946,17 +3944,14 @@ private fun captureTargetSnapshotInternal(
     // AARISH_ADVANCED_BLINK_STRIKE_GHOST_ENGINE_V1
     // Floating glass remove/add nahi hota. FCS glass ko ghost banata hai,
     // yeh service same gesture ko behind-app par dispatch karti hai.
-
-
-    // AARISH_ADVANCED_BLINK_STRIKE_GHOST_ENGINE_V2
     private fun aarishBlinkStrikeDispatchGesture(gesture: RecordedGesture, onDone: () -> Unit) {
         val main = android.os.Handler(android.os.Looper.getMainLooper())
-        val finished = java.util.concurrent.atomic.AtomicBoolean(false)
+        var finished = false
 
         fun finishOnce() {
-            if (finished.compareAndSet(false, true)) {
-                main.post { onDone() }
-            }
+            if (finished) return
+            finished = true
+            main.post { onDone() }
         }
 
         try {
@@ -3965,21 +3960,21 @@ private fun captureTargetSnapshotInternal(
                 return
             }
 
-            val raw0 = gesture.points
+            val raw = gesture.points
                 .filter { p ->
                     !p.x.isNaN() && !p.x.isInfinite() &&
                     !p.y.isNaN() && !p.y.isInfinite()
                 }
                 .sortedBy { it.t.coerceAtLeast(0L) }
 
-            if (raw0.isEmpty()) {
+            if (raw.isEmpty()) {
                 finishOnce()
                 return
             }
 
-            val first = raw0.first()
+            val first = raw.first()
 
-            // Virtual system actions.
+            // System-action virtual points.
             if (first.x <= -50f) {
                 val ok = when (first.x.toInt()) {
                     -100 -> performGlobalAction(GLOBAL_ACTION_BACK)
@@ -3988,13 +3983,6 @@ private fun captureTargetSnapshotInternal(
                 }
                 main.postDelayed({ finishOnce() }, if (ok) 180L else 0L)
                 return
-            }
-
-            val raw = if (raw0.size <= 180) {
-                raw0
-            } else {
-                val step = kotlin.math.ceil(raw0.size / 180.0).toInt().coerceAtLeast(1)
-                raw0.filterIndexed { index, _ -> index == 0 || index == raw0.lastIndex || index % step == 0 }
             }
 
             val maxX = (resources.displayMetrics.widthPixels.toFloat() - 2f).coerceAtLeast(2f)
@@ -4022,24 +4010,14 @@ private fun captureTargetSnapshotInternal(
                 )
             }
 
+            // Tap gesture ko valid Stroke banane ke liye micro-line.
             if (!movement) {
-                path.lineTo(
-                    (startX + 1.5f).coerceIn(2f, maxX),
-                    (startY + 1.5f).coerceIn(2f, maxY)
-                )
+                path.lineTo((startX + 1.5f).coerceIn(2f, maxX), (startY + 1.5f).coerceIn(2f, maxY))
             }
 
-            val startT = raw0.first().t.coerceAtLeast(0L)
-            val endT = raw0.last().t.coerceAtLeast(startT)
+            val startT = raw.first().t.coerceAtLeast(0L)
+            val endT = raw.last().t.coerceAtLeast(startT)
             val duration = (endT - startT).coerceIn(55L, 600000L)
-
-            // AARISH_LIVE_LONG_PRESS_CHUNK_FIX_V1
-            if (!movement && duration > 59000L) {
-                dispatchLongPressChunksSafe(startX, startY, duration, null) {
-                    finishOnce()
-                }
-                return
-            }
 
             val desc = android.accessibilityservice.GestureDescription.Builder()
                 .addStroke(
@@ -4070,9 +4048,10 @@ private fun captureTargetSnapshotInternal(
                 return
             }
 
+            // Callback miss safety.
             main.postDelayed({
                 finishOnce()
-            }, (duration + 1650L).coerceAtMost(610000L))
+            }, (duration + 1600L).coerceAtMost(610000L))
         } catch (_: Throwable) {
             finishOnce()
         }

@@ -59,7 +59,7 @@ class AutoActionService : AccessibilityService() {
         }
 
 
-        private var instance: AutoActionService? = null
+e private var instance: AutoActionService? = null
 
         fun playNow(context: Context): Boolean {
             val service = instance
@@ -105,7 +105,7 @@ class AutoActionService : AccessibilityService() {
         }
 
         // AARISH_PRESS_REPLAY_PRO_V2_START
-        // AARISH_PRESS_REPLAY_PRO_V2_END
+H_PRESS_REPLAY_PRO_V2_END
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -483,7 +483,7 @@ class AutoActionService : AccessibilityService() {
             }
         }
     }
-    // AARIS        // AARISH_PRESS_REPLAY_PRO_V2_END
+    // AARISH_PRESS_REPLAY_PRO_V2_END
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -4032,14 +4032,6 @@ private fun captureTargetSnapshotInternal(
             val startT = raw0.first().t.coerceAtLeast(0L)
             val endT = raw0.last().t.coerceAtLeast(startT)
             val duration = (endT - startT).coerceIn(55L, 600000L)
-
-            // AARISH_LIVE_LONG_PRESS_CHUNK_FIX_V1
-            if (!movement && duration > 59000L) {
-                dispatchLongPressChunksSafe(startX, startY, duration, null) {
-                    finishOnce()
-                }
-                return
-            }
 
             val desc = android.accessibilityservice.GestureDescription.Builder()
                 .addStroke(

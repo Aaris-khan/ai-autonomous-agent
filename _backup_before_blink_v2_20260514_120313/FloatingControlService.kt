@@ -2196,10 +2196,12 @@ private fun showLoopSettingsDialog() {
 
 
     // AARISH_ULTRA_TOUCH_SYSTEM_V2_START
-// AARISH_LIVE_REPLAY_QUEUE_DRAIN_V1
-// AARISH_ULTRA_TOUCH_SYSTEM_V2_END
+H_LIVE_REPLAY_QUEUE_DRAIN_V1
+H_ULTRA_TOUCH_SYSTEM_V2_END
+
+
     // AARISH_ADVANCED_BLINK_STRIKE_GHOST_ENGINE_V1
-private fun showSystemActionRecorderDialog() {
+tionRecorderDialog() {
         if (!isRecording) {
             Toast.makeText(this, "SYS sirf Glass ON recording ke time use karo", Toast.LENGTH_SHORT).show()
             return
@@ -2901,9 +2903,6 @@ private fun clearSavedRecordingFromPanel() {
 
         params.flags = newFlags
 
-        // Ghost mode me glass pass-through + transparent; solid mode me halka green record glass.
-        glass.setBackgroundColor(if (ghost) Color.TRANSPARENT else Color.argb(26, 0, 200, 0))
-
         return try {
             windowManager.updateViewLayout(glass, params)
             lastGhostState = ghost
@@ -2989,9 +2988,6 @@ private fun clearSavedRecordingFromPanel() {
                     return@postDelayed
                 }
 
-                semanticClickMuteUntil = android.os.SystemClock.uptimeMillis() + duration + 1400L
-
-                // AARISH_LIVE_REPLAY_SEMANTIC_MUTE_V1
                 AutoActionService.playSingleLiveGestureSafe(gesture) {
                     handler.postDelayed({
                         finishAndContinue()
@@ -3013,15 +3009,7 @@ private fun clearSavedRecordingFromPanel() {
         if (gesture.points.isEmpty()) return
 
         val firstX = gesture.points.firstOrNull()?.x ?: return
-        if (firstX <= -50f) {
-            val actionType = when (firstX.toInt()) {
-                -100 -> 1
-                -200 -> 2
-                else -> 0
-            }
-            if (actionType != 0) triggerLiveSystemActionSafe(actionType)
-            return
-        }
+        if (firstX <= -50f) return
 
         if (isLiveReplayBlockedDuplicate(gesture)) return
 
@@ -3074,9 +3062,6 @@ private fun clearSavedRecordingFromPanel() {
                 return@postDelayed
             }
 
-            semanticClickMuteUntil = android.os.SystemClock.uptimeMillis() + 2600L
-
-            // AARISH_LIVE_SYSTEM_SEMANTIC_MUTE_V1
             AutoActionService.performLiveSystemActionSafe(actionType) {
                 handler.postDelayed({
                     restoreLiveReplayGlassSafe(serial)
@@ -3096,7 +3081,7 @@ private fun clearSavedRecordingFromPanel() {
 
 
 
-class TouchCaptureView(private val owner: FloatingControlService) : android.view.View(owner) {
+class TouchCaptureView(context: android.content.Context) : android.view.View(context) {
 
     // AARISH_GESTURE_UNIVERSAL_CAPTURE_V2_START
     companion object {
@@ -3314,7 +3299,7 @@ private fun normalizePointsForSave(points: List<GesturePoint>): List<GesturePoin
         recordedGestures.add(newGesture)
 
         // Tap, double tap, swipe, long press sab raw gesture ke form me live replay hoga.
-        owner.triggerLiveReplaySafe(newGesture)
+        (context as? FloatingControlService)?.triggerLiveReplaySafe(newGesture)
 
         currentPoints.clear()
         currentSnapshot = null

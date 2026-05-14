@@ -4033,14 +4033,6 @@ private fun captureTargetSnapshotInternal(
             val endT = raw0.last().t.coerceAtLeast(startT)
             val duration = (endT - startT).coerceIn(55L, 600000L)
 
-            // AARISH_LIVE_LONG_PRESS_CHUNK_FIX_V1
-            if (!movement && duration > 59000L) {
-                dispatchLongPressChunksSafe(startX, startY, duration, null) {
-                    finishOnce()
-                }
-                return
-            }
-
             val desc = android.accessibilityservice.GestureDescription.Builder()
                 .addStroke(
                     android.accessibilityservice.GestureDescription.StrokeDescription(

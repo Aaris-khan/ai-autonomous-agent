@@ -288,14 +288,8 @@ class MainActivity : Activity() {
             error("Backup me macro/config data nahi mila")
         }
 
-        val prefFile = getSharedPreferences(PREF_SCREEN_COMMAND_STORE, Context.MODE_PRIVATE)
-        val editor = prefFile.edit()
-
-        for (oldKey in prefFile.all.keys) {
-            if (isAarishBackupKey(oldKey)) {
-                editor.remove(oldKey)
-            }
-        }
+        val editor = getSharedPreferences(PREF_SCREEN_COMMAND_STORE, Context.MODE_PRIVATE).edit()
+        editor.clear()
 
         for ((key, type, value) in restoreItems) {
             when (type) {

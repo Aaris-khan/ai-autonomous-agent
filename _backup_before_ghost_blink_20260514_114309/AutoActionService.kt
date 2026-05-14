@@ -16,50 +16,7 @@ import kotlin.math.max
 class AutoActionService : AccessibilityService() {
 
     companion object {
-
-        // AARISH_BLINK_STRIKE_AAS_BRIDGE_V2
-        fun playSingleLiveGestureSafe(gesture: RecordedGesture, onDone: () -> Unit) {
-            val svc = instance
-            if (svc == null) {
-                onDone()
-                return
-            }
-
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                if (instance !== svc) {
-                    onDone()
-                } else {
-                    svc.aarishBlinkStrikeDispatchGesture(gesture, onDone)
-                }
-            }
-        }
-
-        fun performLiveSystemActionSafe(actionType: Int, onDone: () -> Unit) {
-            val svc = instance
-            if (svc == null) {
-                onDone()
-                return
-            }
-
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                val ok = try {
-                    when (actionType) {
-                        1 -> svc.performGlobalAction(GLOBAL_ACTION_BACK)
-                        2 -> svc.performGlobalAction(GLOBAL_ACTION_RECENTS)
-                        else -> false
-                    }
-                } catch (_: Throwable) {
-                    false
-                }
-
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    onDone()
-                }, if (ok) 180L else 0L)
-            }
-        }
-
-
-        private var instance: AutoActionService? = null
+        @Volatile private var instance: AutoActionService? = null
 
         fun playNow(context: Context): Boolean {
             val service = instance
@@ -105,6 +62,23 @@ class AutoActionService : AccessibilityService() {
         }
 
         // AARISH_PRESS_REPLAY_PRO_V2_START
+        fun playSingleLiveGestureSafe(gesture: RecordedGesture, onComplete: () -> Unit) {
+            val service = instance
+            if (service != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                service.fireLiveReplaySafe(gesture, onComplete)
+            } else {
+                onComplete()
+            }
+        }
+
+        fun performLiveSystemActionSafe(actionType: Int, onComplete: () -> Unit) {
+            val service = instance
+            if (service != null) {
+                service.performLiveSystemActionInternal(actionType, onComplete)
+            } else {
+                onComplete()
+            }
+        }
         // AARISH_PRESS_REPLAY_PRO_V2_END
     }
 
@@ -483,7 +457,7 @@ class AutoActionService : AccessibilityService() {
             }
         }
     }
-    // AARIS        // AARISH_PRESS_REPLAY_PRO_V2_END
+    // AARISH_PRESS_REPLAY_PRO_V2_END
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -3940,141 +3914,5 @@ private fun captureTargetSnapshotInternal(
 
     override fun onInterrupt() {
         stopPlaybackInternal(showToast = false)
-    }
-
-
-    // AARISH_ADVANCED_BLINK_STRIKE_GHOST_ENGINE_V1
-    // Floating glass remove/add nahi hota. FCS glass ko ghost banata hai,
-    // yeh service same gesture ko behind-app par dispatch karti hai.
-
-
-    // AARISH_ADVANCED_BLINK_STRIKE_GHOST_ENGINE_V2
-    private fun aarishBlinkStrikeDispatchGesture(gesture: RecordedGesture, onDone: () -> Unit) {
-        val main = android.os.Handler(android.os.Looper.getMainLooper())
-        val finished = java.util.concurrent.atomic.AtomicBoolean(false)
-
-        fun finishOnce() {
-            if (finished.compareAndSet(false, true)) {
-                main.post { onDone() }
-            }
-        }
-
-        try {
-            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.N) {
-                finishOnce()
-                return
-            }
-
-            val raw0 = gesture.points
-                .filter { p ->
-                    !p.x.isNaN() && !p.x.isInfinite() &&
-                    !p.y.isNaN() && !p.y.isInfinite()
-                }
-                .sortedBy { it.t.coerceAtLeast(0L) }
-
-            if (raw0.isEmpty()) {
-                finishOnce()
-                return
-            }
-
-            val first = raw0.first()
-
-            // Virtual system actions.
-            if (first.x <= -50f) {
-                val ok = when (first.x.toInt()) {
-                    -100 -> performGlobalAction(GLOBAL_ACTION_BACK)
-                    -200 -> performGlobalAction(GLOBAL_ACTION_RECENTS)
-                    else -> false
-                }
-                main.postDelayed({ finishOnce() }, if (ok) 180L else 0L)
-                return
-            }
-
-            val raw = if (raw0.size <= 180) {
-                raw0
-            } else {
-                val step = kotlin.math.ceil(raw0.size / 180.0).toInt().coerceAtLeast(1)
-                raw0.filterIndexed { index, _ -> index == 0 || index == raw0.lastIndex || index % step == 0 }
-            }
-
-            val maxX = (resources.displayMetrics.widthPixels.toFloat() - 2f).coerceAtLeast(2f)
-            val maxY = (resources.displayMetrics.heightPixels.toFloat() - 2f).coerceAtLeast(2f)
-
-            val startX = first.x.coerceIn(2f, maxX)
-            val startY = first.y.coerceIn(2f, maxY)
-
-            val path = android.graphics.Path()
-            path.moveTo(startX, startY)
-
-            var movement = false
-            for (i in 1 until raw.size) {
-                val p = raw[i]
-                val dx = p.x - first.x
-                val dy = p.y - first.y
-
-                if (kotlin.math.abs(dx) > 7f || kotlin.math.abs(dy) > 7f) {
-                    movement = true
-                }
-
-                path.lineTo(
-                    (startX + dx).coerceIn(2f, maxX),
-                    (startY + dy).coerceIn(2f, maxY)
-                )
-            }
-
-            if (!movement) {
-                path.lineTo(
-                    (startX + 1.5f).coerceIn(2f, maxX),
-                    (startY + 1.5f).coerceIn(2f, maxY)
-                )
-            }
-
-            val startT = raw0.first().t.coerceAtLeast(0L)
-            val endT = raw0.last().t.coerceAtLeast(startT)
-            val duration = (endT - startT).coerceIn(55L, 600000L)
-
-            // AARISH_LIVE_LONG_PRESS_CHUNK_FIX_V1
-            if (!movement && duration > 59000L) {
-                dispatchLongPressChunksSafe(startX, startY, duration, null) {
-                    finishOnce()
-                }
-                return
-            }
-
-            val desc = android.accessibilityservice.GestureDescription.Builder()
-                .addStroke(
-                    android.accessibilityservice.GestureDescription.StrokeDescription(
-                        path,
-                        0L,
-                        duration
-                    )
-                )
-                .build()
-
-            val accepted = dispatchGesture(
-                desc,
-                object : android.accessibilityservice.AccessibilityService.GestureResultCallback() {
-                    override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
-                        finishOnce()
-                    }
-
-                    override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
-                        finishOnce()
-                    }
-                },
-                null
-            )
-
-            if (!accepted) {
-                finishOnce()
-                return
-            }
-
-            main.postDelayed({
-                finishOnce()
-            }, (duration + 1650L).coerceAtMost(610000L))
-        } catch (_: Throwable) {
-            finishOnce()
-        }
     }
 }

@@ -1,5 +1,7 @@
 package com.aarishkhan.aarishai
 
+import android.os.SystemClock
+
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
@@ -14,6 +16,7 @@ import android.widget.Button
 import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
+import android.Manifest
 
 class MainActivity : Activity() {
     private lateinit var btnScreenCommand: Button
@@ -30,7 +33,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
 
         isWaitingForPermission = savedInstanceState?.getBoolean(KEY_WAITING_PERMISSION, false) ?: false
-        lastPermissionLaunchAt = savedInstanceState?.getLong(KEY_LAST_PERMISSION_LAUNCH_AT, 0L) ?: 0L
+        lastPermissionLaunchAt = 0L
         notificationPermissionAskedThisSession = savedInstanceState?.getBoolean(KEY_NOTIFICATION_ASKED, false) ?: false
         lastPermissionScreen = savedInstanceState?.getString(KEY_LAST_PERMISSION_SCREEN)
         autoPermissionPromptDone = savedInstanceState?.getBoolean(KEY_AUTO_PERMISSION_PROMPT_DONE, false) ?: false
@@ -42,6 +45,7 @@ class MainActivity : Activity() {
         btnRestoreData = findViewById(R.id.btnRestoreData)
 
         btnScreenCommand.setOnClickListener {
+            autoPermissionPromptDone = false
             lastPermissionScreen = null
             autoPermissionPromptDone = false
             startScreenCommandSystem(forceOpenSettings = true)
@@ -70,8 +74,7 @@ class MainActivity : Activity() {
                 return
             }
 
-            if (returnedFrom == PERMISSION_SCREEN_OVERLAY && hasOverlayPermission() && !isAccessibilityServiceEnabled()) {
-                lastPermissionLaunchAt = 0L
+            if (returnedFrom == "overlay" && hasOverlayPermission() && !isAccessibilityServiceEnabled()) {
                 startScreenCommandSystem(forceOpenSettings = true)
                 return
             }
@@ -80,9 +83,12 @@ class MainActivity : Activity() {
             return
         }
 
-        // Restore/Export screen ko disturb mat karo.
-        // Permission flow sirf SCREEN COMMAND button dabane par open hoga.
+        if ((!hasOverlayPermission() || !isAccessibilityServiceEnabled()) && !autoPermissionPromptDone) {
+            autoPermissionPromptDone = true
+            startScreenCommandSystem(forceOpenSettings = true)
+        }
     }
+
 
     private fun exportBackupWithPicker() {
         try {
@@ -288,14 +294,8 @@ class MainActivity : Activity() {
             error("Backup me macro/config data nahi mila")
         }
 
-        val prefFile = getSharedPreferences(PREF_SCREEN_COMMAND_STORE, Context.MODE_PRIVATE)
-        val editor = prefFile.edit()
-
-        for (oldKey in prefFile.all.keys) {
-            if (isAarishBackupKey(oldKey)) {
-                editor.remove(oldKey)
-            }
-        }
+        val editor = getSharedPreferences(PREF_SCREEN_COMMAND_STORE, Context.MODE_PRIVATE).edit()
+        editor.clear()
 
         for ((key, type, value) in restoreItems) {
             when (type) {
@@ -326,38 +326,54 @@ class MainActivity : Activity() {
 
 
     private fun startScreenCommandSystem(forceOpenSettings: Boolean) {
-        if (isFinishing || isDestroyed) return
-
         if (!hasOverlayPermission()) {
             if (forceOpenSettings && canLaunchPermissionScreenSafely()) {
-                openOverlayPermissionScreen()
+                Toast.makeText(this, "Overlay permission ON karo", Toast.LENGTH_LONG).show()
+                isWaitingForPermission = true
+                lastPermissionScreen = "overlay"
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    )
+                )
             }
             return
         }
 
         if (!isAccessibilityServiceEnabled()) {
             if (forceOpenSettings && canLaunchPermissionScreenSafely()) {
-                openAccessibilityPermissionScreen()
+                Toast.makeText(this, "Accessibility Service ON karo", Toast.LENGTH_LONG).show()
+                isWaitingForPermission = true
+                lastPermissionScreen = "accessibility"
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
             return
         }
 
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(POST_NOTIFICATIONS_PERMISSION) != PackageManager.PERMISSION_GRANTED &&
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
             !notificationPermissionAskedThisSession
         ) {
             notificationPermissionAskedThisSession = true
-            requestPermissions(arrayOf(POST_NOTIFICATIONS_PERMISSION), REQUEST_NOTIFICATION_PERMISSION)
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATION_PERMISSION)
             return
         }
 
         autoPermissionPromptDone = false
 
-        FloatingControlService.instance?.let { service ->
-            service.pokePanelToFront()
+        if (FloatingControlService.instance != null) {
+
+
             moveTaskToBack(true)
+
+
             return
+
+
         }
+
+
 
         try {
             val serviceIntent = Intent(this, FloatingControlService::class.java)
@@ -371,6 +387,7 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Service start nahi hua: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
+
 
     private fun openOverlayPermissionScreen() {
         Toast.makeText(this, "Overlay permission ON karo", Toast.LENGTH_LONG).show()
@@ -398,9 +415,17 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun canLaunchPermissionScreenSafely(minGapMs: Long = 1200L): Boolean {
-        val now = android.os.SystemClock.elapsedRealtime()
-        if (now - lastPermissionLaunchAt < minGapMs) return false
+    private fun canLaunchPermissionScreenSafely(): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastPermissionLaunchAt < 1200L) return false
+        lastPermissionLaunchAt = now
+        return true
+    }
+
+
+    private fun canLaunchPermissionScreenSafely(): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastPermissionLaunchAt < 1200L) return false
         lastPermissionLaunchAt = now
         return true
     }
@@ -408,6 +433,7 @@ class MainActivity : Activity() {
     private fun hasOverlayPermission(): Boolean {
         return Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)
     }
+
 
     override fun onRequestPermissionsResult(
         requestCode: Int,
@@ -423,11 +449,9 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun isAccessibilityServiceEnabled(): Boolean {
-        val expected = ComponentName(this, AutoActionService::class.java)
-        val expectedFull = expected.flattenToString()
-        val expectedShort = expected.flattenToShortString()
 
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val expectedService = ComponentName(this, AutoActionService::class.java).flattenToString()
         val enabledServices = Settings.Secure.getString(
             contentResolver,
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
@@ -435,35 +459,22 @@ class MainActivity : Activity() {
 
         val splitter = TextUtils.SimpleStringSplitter(':')
         splitter.setString(enabledServices)
-
         for (service in splitter) {
-            val item = service.trim()
-            if (item.equals(expectedFull, ignoreCase = true) ||
-                item.equals(expectedShort, ignoreCase = true)
-            ) {
-                return true
-            }
-
-            val enabled = ComponentName.unflattenFromString(item)
-            if (enabled != null &&
-                enabled.packageName == expected.packageName &&
-                enabled.className == expected.className
-            ) {
-                return true
-            }
+            if (service.equals(expectedService, ignoreCase = true)) return true
         }
-
         return false
     }
+
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putBoolean(KEY_WAITING_PERMISSION, isWaitingForPermission)
-        outState.putLong(KEY_LAST_PERMISSION_LAUNCH_AT, lastPermissionLaunchAt)
+        outState.putLong(KEY_LAST_PERMISSION_LAUNCH_AT, 0L)
         outState.putBoolean(KEY_NOTIFICATION_ASKED, notificationPermissionAskedThisSession)
         outState.putString(KEY_LAST_PERMISSION_SCREEN, lastPermissionScreen)
         outState.putBoolean(KEY_AUTO_PERMISSION_PROMPT_DONE, autoPermissionPromptDone)
     }
+
 
     companion object {
         private const val PREF_SCREEN_COMMAND_STORE = "screen_command_store"
