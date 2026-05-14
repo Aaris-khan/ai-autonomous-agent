@@ -4,8 +4,16 @@ workflows:
     environment:
       java: 17
     scripts:
-      - name: Build Debug APK
+      - name: Smart Build Debug APK
         script: |
-          ./gradlew assembleDebug
+          # Agar gradlew file hai, toh usko execute permission do
+          if [ -f "gradlew" ]; then
+            chmod +x gradlew
+            ./gradlew assembleDebug
+          else
+            # Agar gradlew nahi mila, toh direct system gradle use karo
+            echo "⚠️ gradlew not found, using system gradle..."
+            gradle assembleDebug
+          fi
     artifacts:
       - app/build/outputs/apk/**/*.apk
