@@ -2415,7 +2415,7 @@ private fun showSystemActionRecorderDialog() {
         }
 
         val now = android.os.SystemClock.uptimeMillis()
-        if (now - lastOverlayRecoverAt < 220L) return
+        if (now - lastOverlayRecoverAt < 1500L) return
         lastOverlayRecoverAt = now
 
         val panel = panelView
@@ -2440,19 +2440,9 @@ private fun showSystemActionRecorderDialog() {
 
 
     private fun reAddOverlayViewSilently(view: View, params: WindowManager.LayoutParams) {
-        fun removeQuietly() {
-            try {
-                if (view.parent != null) {
-                    try {
-                        windowManager.removeViewImmediate(view)
-                    } catch (_: Exception) {
-                        try { windowManager.removeView(view) } catch (_: Exception) {}
-                    }
-                }
-            } catch (_: Exception) {
-            }
-        }
-
+        // AARISH_NO_PANEL_FLICKER_FINAL_V1:
+        // Panel attached ho to remove+add bilkul nahi.
+        // Sirf updateViewLayout = no blink, no window-event feedback loop.
         fun addOrUpdateQuietly(): Boolean {
             return try {
                 if (view.parent == null) {
@@ -2466,9 +2456,20 @@ private fun showSystemActionRecorderDialog() {
             }
         }
 
-        removeQuietly()
-
+        // Normal case: attached panel ko sirf update karo.
         if (addOrUpdateQuietly()) return
+
+        // Rare broken state: update/add fail ho tabhi remove+retry.
+        try {
+            if (view.parent != null) {
+                try {
+                    windowManager.removeViewImmediate(view)
+                } catch (_: Exception) {
+                    try { windowManager.removeView(view) } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) {
+        }
 
         handler.postDelayed({
             if (instance !== this@FloatingControlService || !::windowManager.isInitialized) return@postDelayed
