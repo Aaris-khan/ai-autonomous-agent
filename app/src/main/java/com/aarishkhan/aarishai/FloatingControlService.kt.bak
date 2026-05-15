@@ -83,8 +83,6 @@ class FloatingControlService : Service() {
     private var liveReplayQueueDraining = false
     private var liveReplayFloodToastAt = 0L
     private var lastGhostState: Boolean? = null
-    // AARISH_IDLE_TIMER_CANCEL_V1: explicit timer reference for clean cancellation
-    private var liveIdleTimerRunnable: Runnable? = null
 
 
     private var playbackWatcherRunnable: Runnable? = null
@@ -2085,7 +2083,7 @@ private fun showLoopSettingsDialog() {
         playbackWatcherRunnable?.let { handler.removeCallbacks(it) }
         playbackWatcherRunnable = null
         // AARISH_V2_REMOVEVIEW_CLEANUP
-        aarishResetLiveReplayStateSafe(forceSolid = false)
+        aarishResetLiveReplayStateSafe()
         safeRemoveView(captureView)
         captureView = null
         if (AutoActionService.isPlaying()) AutoActionService.stopPlayback(this)
@@ -2613,8 +2611,7 @@ private fun extractAndAppendGestures() {
             extractAndAppendGestures()
             isRecording = false
             // AARISH_V2_REMOVEVIEW_CLEANUP
-            // forceSolid=false: view remove hone wali hai, alpha restore ki zaroorat nahi
-            aarishResetLiveReplayStateSafe(forceSolid = false)
+            aarishResetLiveReplayStateSafe()
             safeRemoveView(captureView)
             captureView = null
             glassHiddenAt = android.os.SystemClock.uptimeMillis()
@@ -2666,8 +2663,7 @@ private fun startRecording() {
     if (isRecording) return
 
     // AARISH_V2_REMOVEVIEW_CLEANUP
-    // forceSolid=false: glass turant remove hogi, alpha restore waste hai
-    aarishResetLiveReplayStateSafe(forceSolid = false)
+    aarishResetLiveReplayStateSafe()
     safeRemoveView(captureView)
     captureView = null
     pendingDiscardConfirm = false
@@ -2707,7 +2703,6 @@ private fun startRecording() {
     }
 
     captureView = touchLayer
-    lastGhostState = false
     isRecording = true
     updateUIState("DONE", true, false, true)
     bringPanelToFront()
@@ -2817,7 +2812,7 @@ private fun saveRecording() {
         if (liveView != null) {
             extractAndAppendGestures()
             // AARISH_V2_REMOVEVIEW_CLEANUP
-            aarishResetLiveReplayStateSafe(forceSolid = false)
+            aarishResetLiveReplayStateSafe()
             safeRemoveView(liveView)
         } else {
             Toast.makeText(this, "⚠️ Recording layer missing thi. Jo saved buffer hai wahi save hoga.", Toast.LENGTH_LONG).show()
@@ -2937,66 +2932,17 @@ private fun clearSavedRecordingFromPanel() {
 
 
 private fun aarishResetLiveReplayStateSafe(forceSolid: Boolean = true) {
-    liveReplaySerial++
-    liveReplayActive = false
-    liveReplayQueue.clear()
-    liveReplayQueueDraining = false
-    lastLiveReplayAt = 0L
-    lastLiveReplayX = Float.NaN
-    lastLiveReplayY = Float.NaN
-
-    // Pending idle replay timer ko hard-cancel karo.
-    liveIdleTimerRunnable?.let { handler.removeCallbacks(it) }
-    liveIdleTimerRunnable = null
-
-    // IMPORTANT:
-    // Naya glass/panel aane par purana cached ghost state valid nahi hota.
-    // Isko null nahi kiya to code soch sakta hai "already ghost/solid hai",
-    // aur actual WindowManager flags update nahi honge.
-    lastGhostState = null
-
-    val notTouchable = android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-    val notFocusable = android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-
-    fun makePanelTouchableSilently() {
-        try {
-            val panel = panelView ?: return
-            val lp = (panel.layoutParams as? android.view.WindowManager.LayoutParams) ?: panelParams ?: return
-            lp.flags = (lp.flags and notTouchable.inv()) or notFocusable
-            panelParams = lp
-
-            if (::windowManager.isInitialized && panel.parent != null) {
-                windowManager.updateViewLayout(panel, lp)
-            }
-        } catch (_: Throwable) {
+        liveReplaySerial++
+        liveReplayActive = false
+        liveReplayQueue.clear()
+        liveReplayQueueDraining = false
+        lastLiveReplayAt = 0L
+        lastLiveReplayX = Float.NaN
+        lastLiveReplayY = Float.NaN
+        if (forceSolid) {
+            aarishSetGlassGhostModeSafe(false)
         }
     }
-
-    fun makeGlassTouchableSilently() {
-        try {
-            val glass = captureView ?: return
-            val lp = glass.layoutParams as? android.view.WindowManager.LayoutParams ?: return
-            glass.alpha = 1f
-            lp.flags = (lp.flags and notTouchable.inv()) or notFocusable
-
-            if (::windowManager.isInitialized && glass.parent != null) {
-                windowManager.updateViewLayout(glass, lp)
-            }
-        } catch (_: Throwable) {
-        }
-    }
-
-    if (forceSolid) {
-        // Normal restore: glass + panel dono touchable.
-        aarishSetGlassGhostModeSafe(false)
-    } else {
-        // View remove hone wali ho tab bhi panel ko touchable zaroor restore karo,
-        // warna DONE/SAVE/CUT next session me dead ho sakte hain.
-        makeGlassTouchableSilently()
-        makePanelTouchableSilently()
-    }
-}
-
 
     private fun restoreLiveReplayGlassSafe(serial: Int) {
         handler.post {
@@ -3049,220 +2995,269 @@ private fun aarishSetGlassGhostModeSafe(ghost: Boolean): Boolean {
     val notTouchable = android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
     val notFocusable = android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
 
-    val glassAlreadyGhost = (glassParams.flags and notTouchable) != 0
-    val panelAlreadyGhost = if (panel != null && panelLp != null && panel.parent != null) {
-        (panelLp.flags and notTouchable) != 0
-    } else {
-        ghost
+    fun targetFlags(oldFlags: Int): Int {
+        return if (ghost) {
+            oldFlags or notTouchable or notFocusable
+        } else {
+            (oldFlags and notTouchable.inv()) or notFocusable
+        }
     }
 
-    // Cached state tabhi trust karo jab real WindowManager flags bhi same hon.
-    if (lastGhostState == ghost && glassAlreadyGhost == ghost && panelAlreadyGhost == ghost) {
+    fun isVisuallySolid(view: android.view.View?): Boolean {
+        if (view == null) return true
+        return try {
+            view.visibility == android.view.View.VISIBLE && view.alpha >= 0.99f
+        } catch (_: Throwable) {
+            true
+        }
+    }
+
+    fun ensureVisuallySolidOnlyIfBroken(view: android.view.View?) {
+        if (view == null) return
+        try {
+            if (view.visibility != android.view.View.VISIBLE) {
+                view.visibility = android.view.View.VISIBLE
+            }
+            if (view.alpha < 0.99f) {
+                view.alpha = 1f
+            }
+            view.isFocusable = false
+            view.clearFocus()
+        } catch (_: Throwable) {}
+    }
+
+    fun clearPressedOnly(view: android.view.View?) {
+        if (view == null) return
+        try {
+            if (view.isPressed) view.isPressed = false
+            view.jumpDrawablesToCurrentState()
+        } catch (_: Throwable) {}
+
+        if (view is android.view.ViewGroup) {
+            for (i in 0 until view.childCount) {
+                clearPressedOnly(view.getChildAt(i))
+            }
+        }
+    }
+
+    val newGlassFlags = targetFlags(glassParams.flags)
+    val newPanelFlags = panelLp?.let { targetFlags(it.flags) }
+
+    val glassNeedsUpdate = glassParams.flags != newGlassFlags
+    val panelNeedsUpdate =
+        panel != null &&
+            panelLp != null &&
+            panel.parent != null &&
+            newPanelFlags != null &&
+            panelLp.flags != newPanelFlags
+
+    val visualNeedsRepair = !isVisuallySolid(glass) || !isVisuallySolid(panel)
+
+    // ZERO-BLINK MASTER RULE:
+    // State already same ho to WindowManager.updateViewLayout() bilkul mat chalao.
+    // Repeated updateViewLayout hi kuch phones me micro flicker/compositor jhatka deta hai.
+    if (lastGhostState == ghost && !glassNeedsUpdate && !panelNeedsUpdate && !visualNeedsRepair) {
         return true
     }
 
+    val oldGlassFlags = glassParams.flags
+    val oldPanelFlags = panelLp?.flags
+
     return try {
-        // NO-BLINK RULE:
-        // Glass ko alpha 0 mat karo. Visual green glass stable rahega.
-        // Replay ke time sirf FLAG_NOT_TOUCHABLE lagta hai, isliye injected gesture
-        // behind-app tak pass hota hai without remove/add blink.
-        glass.alpha = 1f
+        clearPressedOnly(panel)
+        clearPressedOnly(glass)
 
-        glassParams.flags = if (ghost) {
-            glassParams.flags or notTouchable or notFocusable
-        } else {
-            (glassParams.flags and notTouchable.inv()) or notFocusable
-        }
+        // No invisible. No alpha 0. No color change.
+        // Sirf agar kisi purane patch ne view tod diya ho tabhi repair.
+        ensureVisuallySolidOnlyIfBroken(glass)
+        ensureVisuallySolidOnlyIfBroken(panel)
 
-        if (glass.parent != null) {
+        if (glassNeedsUpdate) {
+            glassParams.flags = newGlassFlags
             windowManager.updateViewLayout(glass, glassParams)
         }
 
-        if (panel != null && panelLp != null) {
-            panelLp.flags = if (ghost) {
-                panelLp.flags or notTouchable or notFocusable
-            } else {
-                (panelLp.flags and notTouchable.inv()) or notFocusable
-            }
-
-            panelParams = panelLp
-
-            if (panel.parent != null) {
-                windowManager.updateViewLayout(panel, panelLp)
-            }
+        if (panelNeedsUpdate && panel != null && panelLp != null && newPanelFlags != null) {
+            panelLp.flags = newPanelFlags
+            windowManager.updateViewLayout(panel, panelLp)
         }
 
         lastGhostState = ghost
         true
     } catch (_: Throwable) {
-        lastGhostState = null
+        try {
+            glassParams.flags = oldGlassFlags
+            windowManager.updateViewLayout(glass, glassParams)
+        } catch (_: Throwable) {}
+
+        try {
+            if (panel != null && panelLp != null && panel.parent != null && oldPanelFlags != null) {
+                panelLp.flags = oldPanelFlags
+                windowManager.updateViewLayout(panel, panelLp)
+            }
+        } catch (_: Throwable) {}
+
         false
     }
 }
 
 
 
-
 private fun drainNextLiveReplaySafe() {
-    handler.post {
-        if (instance !== this@FloatingControlService || !isRecording || AutoActionService.isPlaying()) {
-            aarishResetLiveReplayStateSafe()
-            return@post
-        }
-        if (liveReplayQueue.isEmpty()) {
-            liveReplayQueueDraining = false
-            liveReplayActive = false
-            aarishSetGlassGhostModeSafe(false)
-            return@post
-        }
-
-        val serial = liveReplaySerial
-        liveReplayQueueDraining = true
-        liveReplayActive = true
-        semanticClickMuteUntil = android.os.SystemClock.uptimeMillis() + 2200L
-
-        if (!aarishSetGlassGhostModeSafe(true)) {
-            aarishResetLiveReplayStateSafe(forceSolid = false)
-            return@post
-        }
-
-        fun restoreAfterQueueDone() {
-            if (serial != liveReplaySerial || instance !== this@FloatingControlService) return
-            liveReplayQueueDraining = false
-            liveReplayActive = false
-            handler.postDelayed({
-                if (serial == liveReplaySerial &&
-                    instance === this@FloatingControlService &&
-                    isRecording &&
-                    !AutoActionService.isPlaying() &&
-                    !liveReplayActive &&
-                    !liveReplayQueueDraining
-                ) {
-                    aarishSetGlassGhostModeSafe(false)
-                }
-            }, 80L)
-        }
-
-        fun fireNextQueuedGesture() {
-            if (serial != liveReplaySerial || instance !== this@FloatingControlService ||
-                !isRecording || AutoActionService.isPlaying()) {
+        handler.post {
+            if (instance !== this@FloatingControlService || !isRecording || AutoActionService.isPlaying()) {
                 aarishResetLiveReplayStateSafe()
-                return
+                return@post
             }
-            val gesture = liveReplayQueue.pollFirst()
-            if (gesture == null) {
-                restoreAfterQueueDone()
-                return
-            }
-            val duration = liveReplayDurationMs(gesture)
-            val watchdogMs = (duration + 4500L).coerceAtMost(610000L)
-            var finished = false
 
-            fun finishAndContinue() {
-                if (finished) return
-                finished = true
-                if (serial != liveReplaySerial || instance !== this@FloatingControlService ||
-                    !isRecording || AutoActionService.isPlaying()) {
+            if (liveReplayQueue.isEmpty()) {
+                liveReplayQueueDraining = false
+                liveReplayActive = false
+                aarishSetGlassGhostModeSafe(false)
+                return@post
+            }
+
+            val serial = liveReplaySerial
+            liveReplayQueueDraining = true
+            liveReplayActive = true
+
+            semanticClickMuteUntil = android.os.SystemClock.uptimeMillis() + 2200L
+
+            if (!aarishSetGlassGhostModeSafe(true)) {
+                aarishResetLiveReplayStateSafe(forceSolid = false)
+                return@post
+            }
+
+            fun restoreAfterQueueDone() {
+                if (serial != liveReplaySerial || instance !== this@FloatingControlService) return
+                liveReplayQueueDraining = false
+                liveReplayActive = false
+
+                handler.postDelayed({
+                    if (
+                        serial == liveReplaySerial &&
+                        instance === this@FloatingControlService &&
+                        isRecording &&
+                        !AutoActionService.isPlaying() &&
+                        !liveReplayActive &&
+                        !liveReplayQueueDraining
+                    ) {
+                        aarishSetGlassGhostModeSafe(false)
+                    }
+                }, 95L)
+            }
+
+            fun fireNextQueuedGesture() {
+                if (serial != liveReplaySerial || instance !== this@FloatingControlService || !isRecording || AutoActionService.isPlaying()) {
                     aarishResetLiveReplayStateSafe()
                     return
                 }
-                if (liveReplayQueue.isNotEmpty()) {
-                    handler.postDelayed({ fireNextQueuedGesture() }, 55L)
-                } else {
+
+                val gesture = liveReplayQueue.pollFirst()
+
+                if (gesture == null) {
                     restoreAfterQueueDone()
+                    return
                 }
+
+                val duration = liveReplayDurationMs(gesture)
+                val watchdogMs = (duration + 4500L).coerceAtMost(610000L)
+                var finished = false
+
+                fun finishAndContinue() {
+                    if (finished) return
+                    finished = true
+
+                    if (serial != liveReplaySerial || instance !== this@FloatingControlService || !isRecording || AutoActionService.isPlaying()) {
+                        aarishResetLiveReplayStateSafe()
+                        return
+                    }
+
+                    if (liveReplayQueue.isNotEmpty()) {
+                        handler.postDelayed({
+                            fireNextQueuedGesture()
+                        }, 55L)
+                    } else {
+                        restoreAfterQueueDone()
+                    }
+                }
+
+                semanticClickMuteUntil = android.os.SystemClock.uptimeMillis() + duration + 1700L
+
+                AutoActionService.playSingleLiveGestureSafe(gesture) {
+                    handler.postDelayed({
+                        finishAndContinue()
+                    }, 70L)
+                }
+
+                handler.postDelayed({
+                    if (serial == liveReplaySerial && liveReplayActive && !finished) {
+                        finishAndContinue()
+                    }
+                }, watchdogMs)
             }
 
-            semanticClickMuteUntil = android.os.SystemClock.uptimeMillis() + duration + 1700L
-            AutoActionService.playSingleLiveGestureSafe(gesture) {
-                handler.postDelayed({ finishAndContinue() }, 70L)
-            }
+            // WindowManager ko panel/glass non-touchable apply karne ka proper time do.
             handler.postDelayed({
-                if (serial == liveReplaySerial && liveReplayActive && !finished) {
-                    finishAndContinue()
-                }
-            }, watchdogMs)
+                fireNextQueuedGesture()
+            }, 125L)
         }
-
-        // Give WindowManager time to apply ghost flags before firing
-        handler.postDelayed({ fireNextQueuedGesture() }, 120L)
     }
-}
 
 fun triggerLiveReplaySafe(gesture: RecordedGesture) {
-    if (instance !== this@FloatingControlService) return
-    if (!isRecording || AutoActionService.isPlaying()) return
-    if (gesture.points.isEmpty()) return
+        if (instance !== this@FloatingControlService) return
+        if (!isRecording || AutoActionService.isPlaying()) return
+        if (gesture.points.isEmpty()) return
 
-    val firstX = gesture.points.firstOrNull()?.x ?: return
-    if (firstX <= -50f) {
-        val actionType = when (firstX.toInt()) {
-            -100 -> 1
-            -200 -> 2
-            else -> 0
+        val firstX = gesture.points.firstOrNull()?.x ?: return
+        if (firstX <= -50f) {
+            val actionType = when (firstX.toInt()) {
+                -100 -> 1
+                -200 -> 2
+                else -> 0
+            }
+            if (actionType != 0) triggerLiveSystemActionSafe(actionType)
+            return
         }
-        if (actionType != 0) triggerLiveSystemActionSafe(actionType)
-        return
+
+        if (isLiveReplayBlockedDuplicate(gesture)) return
+
+        handler.post {
+            if (instance !== this@FloatingControlService || !isRecording || AutoActionService.isPlaying()) return@post
+
+            if (liveReplayQueue.size >= 32) {
+                while (liveReplayQueue.size > 12) {
+                    liveReplayQueue.pollFirst()
+                }
+            }
+
+            liveReplayQueue.addLast(gesture)
+
+            // Agar replay already chal raha hai to usko cancel/reset mat karo.
+            // Bas queue me add rehne do. Ye flicker ka bada fix hai.
+            if (liveReplayActive || liveReplayQueueDraining) {
+                return@post
+            }
+
+            liveReplaySerial++
+            val serial = liveReplaySerial
+
+            handler.postDelayed({
+                if (
+                    serial != liveReplaySerial ||
+                    instance !== this@FloatingControlService ||
+                    !isRecording ||
+                    AutoActionService.isPlaying()
+                ) {
+                    return@postDelayed
+                }
+
+                if (liveReplayQueue.isNotEmpty() && !liveReplayActive && !liveReplayQueueDraining) {
+                    drainNextLiveReplaySafe()
+                }
+            }, 550L)
+        }
     }
-
-    if (isLiveReplayBlockedDuplicate(gesture)) return
-
-    handler.post {
-        if (instance !== this@FloatingControlService || !isRecording || AutoActionService.isPlaying()) return@post
-
-        // Queue overflow par app ko freeze nahi hone dena.
-        if (liveReplayQueue.size >= 64) {
-            while (liveReplayQueue.size > 32) {
-                liveReplayQueue.pollFirst()
-            }
-
-            val now = android.os.SystemClock.uptimeMillis()
-            if (now - liveReplayFloodToastAt > 2500L) {
-                liveReplayFloodToastAt = now
-                Toast.makeText(this, "Too many live taps, old pending taps trimmed", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        liveReplayQueue.addLast(gesture)
-
-        // Agar replay already chal raha hai to same drain baaki queue ko bhi fire karega.
-        if (liveReplayActive || liveReplayQueueDraining) return@post
-
-        // Idle wait ke dauran glass SOLID/touchable rahe.
-        // Purani ghost state bachi ho to turant normal karo.
-        if (lastGhostState == true) {
-            aarishSetGlassGhostModeSafe(false)
-        }
-
-        // Fast double-tap / triple-tap miss na ho:
-        // har new tap purana idle timer cancel karega.
-        liveIdleTimerRunnable?.let { handler.removeCallbacks(it) }
-        liveIdleTimerRunnable = null
-
-        liveReplaySerial++
-        val serial = liveReplaySerial
-
-        val idleTask = Runnable {
-            liveIdleTimerRunnable = null
-
-            if (serial != liveReplaySerial ||
-                instance !== this@FloatingControlService ||
-                !isRecording ||
-                AutoActionService.isPlaying()
-            ) {
-                return@Runnable
-            }
-
-            if (liveReplayQueue.isNotEmpty() && !liveReplayActive && !liveReplayQueueDraining) {
-                drainNextLiveReplaySafe()
-            }
-        }
-
-        liveIdleTimerRunnable = idleTask
-        handler.postDelayed(idleTask, 550L)
-    }
-}
-
 
 }
 
