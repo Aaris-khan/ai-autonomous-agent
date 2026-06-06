@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_main_soft"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <Button
+        android:id="@+id/btnScreenCommand"
+        android:layout_width="match_parent"
+        android:layout_height="72dp"
+        android:background="@drawable/bg_screen_command_button"
+        android:contentDescription="Screen Command"
+        android:elevation="10dp"
+        android:includeFontPadding="false"
+        android:letterSpacing="0.03"
+        android:minHeight="72dp"
+        android:stateListAnimator="@null"
+        android:text="SCREEN COMMAND"
+        android:textAllCaps="false"
+        android:textColor="#FFFFFF"
+        android:textSize="19sp"
+        android:textStyle="bold" />
+
+    <Button
+        android:id="@+id/btnExportData"
+        android:layout_width="match_parent"
+        android:layout_height="58dp"
+        android:layout_marginTop="22dp"
+        android:background="@drawable/bg_screen_command_button"
+        android:contentDescription="Export AarishAI data backup"
+        android:elevation="8dp"
+        android:stateListAnimator="@null"
+        android:text="EXPORT DATA"
+        android:textAllCaps="false"
+        android:textColor="#FFFFFF"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+
+    <Button
+        android:id="@+id/btnRestoreData"
+        android:layout_width="match_parent"
+        android:layout_height="58dp"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/bg_screen_command_button"
+        android:contentDescription="Restore AarishAI data backup"
+        android:elevation="8dp"
+        android:stateListAnimator="@null"
+        android:text="RESTORE DATA"
+        android:textAllCaps="false"
+        android:textColor="#FFFFFF"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+</LinearLayout>
+

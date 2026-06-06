@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- AARISH_GHOST_CLIPBOARD_SCREEN_V10_STYLE -->
+    <style name="AarishTheme.GhostClipboard" parent="@android:style/Theme.Translucent.NoTitleBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:colorBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:windowContentTransitions">false</item>
+        <item name="android:windowAnimationStyle">@style/AarishTheme.GhostClipboard.NoAnimation</item>
+    </style>
+
+    <style name="AarishTheme.GhostClipboard.NoAnimation">
+        <item name="android:activityOpenEnterAnimation">@anim/aarish_no_anim</item>
+        <item name="android:activityOpenExitAnimation">@anim/aarish_no_anim</item>
+        <item name="android:activityCloseEnterAnimation">@anim/aarish_no_anim</item>
+        <item name="android:activityCloseExitAnimation">@anim/aarish_no_anim</item>
+        <item name="android:taskOpenEnterAnimation">@anim/aarish_no_anim</item>
+        <item name="android:taskOpenExitAnimation">@anim/aarish_no_anim</item>
+        <item name="android:taskCloseEnterAnimation">@anim/aarish_no_anim</item>
+        <item name="android:taskCloseExitAnimation">@anim/aarish_no_anim</item>
+    </style>
+
+</resources>

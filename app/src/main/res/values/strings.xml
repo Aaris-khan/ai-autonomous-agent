@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">AarishAI</string>
+    <string name="accessibility_service_description">AarishAI Screen Command automation service</string>
+</resources>
+
